@@ -47,6 +47,32 @@ def joined(rows):
     return join.join_records(feed_records(rows), idx, NAMES)
 
 
+def test_toward_ny_from_trip_terminal():
+    feed = tiny_feed()
+    feed.trips.loc[1, "direction_id"] = "0"  # direction_id must not matter
+    idx = join.build_stop_index(feed, [date(2026, 10, 9)])
+    assert idx.groupby("trip_id")["toward_ny"].first().to_dict() == {"t1": True, "t2": True}
+    # Same trip cut short at Chatham: terminal CM is not NY/HB.
+    short = GtfsFeed(feed.stops, feed.routes, feed.trips,
+                     feed.stop_times[~((feed.stop_times.trip_id == "t1") & (feed.stop_times.stop_id == "s_ny"))],
+                     None, feed.calendar_dates)
+    idx = join.build_stop_index(short, [date(2026, 10, 9)])
+    assert not idx.loc[idx.trip_id == "t1", "toward_ny"].any()
+
+
+def test_last_record_per_stop_keeps_whole_rows():
+    recs = pd.DataFrame({
+        "train_number": ["400", "400"], "stop_sequence": [3, 3],
+        "last_modified_utc": pd.to_datetime(["2026-10-09T11:40Z", "2026-10-09T11:58Z"]),
+        "poll_utc": pd.to_datetime(["2026-10-09T11:40Z", "2026-10-09T11:58Z"]),
+        "delay_s": [60.0, 180.0],
+        "lat": [40.75, None],  # newest record lacks a field
+    })
+    last = join.last_record_per_stop(recs, ["train_number", "stop_sequence"])
+    assert len(last) == 1 and last.iloc[0]["delay_s"] == 180 and pd.isna(last.iloc[0]["lat"])
+    assert last.iloc[0]["n_records"] == 2
+
+
 def test_parse_ny_local_to_utc():
     out = clean.parse_ny_local(pd.Series(["09-Oct-2026 07:40:24 AM", "09-Oct-2026 11:59:00 PM"]))
     assert out[0] == pd.Timestamp("2026-10-09T11:40:24", tz="UTC")  # EDT = UTC−4
@@ -101,6 +127,7 @@ def test_observation_uses_last_record_and_gtfs_delay():
     assert obs.loc["NY", "delay_vs_gtfs_s"] == 13 * 60 + 180
     assert obs.loc["NY", "sched_dep_utc"] == pd.Timestamp("2026-10-09T11:50", tz="UTC")
     assert obs.loc["CM", "delay_vs_gtfs_s"] == 30
+    assert obs["toward_ny"].all()
 
 
 @pytest.mark.parametrize("staleness_s,expect_stale", [(60, False), (300, True)])

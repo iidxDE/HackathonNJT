@@ -29,11 +29,11 @@ class InfraAsset(str, Enum):
 
 
 class FallbackLevel(str, Enum):
-    """Delay pool granularity, finest first."""
+    """Delay pool granularity, finest first. Direction means toward_ny, not GTFS direction_id."""
 
-    LINE_DIRECTION_PERIOD = "line_direction_period"
-    DIRECTION_PERIOD = "direction_period"
-    DIRECTION = "direction"
+    LINE_TOWARD_NY_PERIOD = "line_toward_ny_period"
+    TOWARD_NY_PERIOD = "toward_ny_period"
+    TOWARD_NY = "toward_ny"
 
 
 class AssumptionFlag(str, Enum):
@@ -160,7 +160,7 @@ class PoolKey:
     """Delay pool cell; None means 'all' at coarser fallback levels."""
 
     line: str | None  # GTFS route_id
-    direction: int | None
+    toward_ny: bool | None  # trip terminates at NY or HB (config.TOWARD_NY_TERMINALS)
     period: str | None
 
 
@@ -192,7 +192,11 @@ class DelaySamples:
 
 @dataclass(frozen=True)
 class PoolUsage:
-    """Which pool scored a rail leg, for the UI confidence indicator."""
+    """Which pool scored a rail leg, for the UI confidence indicator.
+
+    run_count is the effective sample: runs observed at both the leg's
+    boarding and alighting stops, not all runs in the pool.
+    """
 
     train_number: str
     pool_key: PoolKey

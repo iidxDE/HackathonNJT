@@ -105,11 +105,14 @@ Do not add new dependencies without a clear reason. Prefer the standard library,
 
 ### 4.3 Delay pools (reliability v0)
 
-- Pool key: **line × direction × period**, not hour and not train number.
+- Pool key: **line × toward_ny × period**, not hour and not train number.
+  - `toward_ny` (bool, per trip) = the trip's GTFS terminal is NY or HB (`config.TOWARD_NY_TERMINALS`). Do **not** key on GTFS `direction_id`: NJT direction 0 also covers trips ending at Newark Penn, Long Branch, Atlantic City, etc.
   - Periods: early (05–06), AM peak (06–09:30), shoulder (09:30–11); extend similarly for the rest of the day.
   - Do not pool by train number: the 10-12 timetable change moves start times by up to ±40 min.
-- **Fallback hierarchy** when a cell has fewer than ~8 runs: line × direction × period → direction × period (all lines) → direction only. Record which level was used and the run count; the UI shows it as a confidence indicator.
+- **Fallback hierarchy** when a cell has fewer than ~8 runs: line × toward_ny × period → toward_ny × period (all lines) → toward_ny only. Record which level was used and the run count; the UI shows it as a confidence indicator.
 - **Store whole runs, not independent stop delays.** Each sample is one historical run with its delay at every stop. Sample size = number of runs, never number of stop observations.
+- **Delay measure: `delay_vs_gtfs_s` only** (estimated time = feed schedule + SEC_LATE, minus the GTFS time). Never pool raw `SEC_LATE`: for some NY arrivals the feed's own schedule is 13 min later than the published GTFS time, so SEC_LATE understates lateness against the timetable riders use.
+- **One delay per stop = the approach delay:** the last record seen while that stop was `NEXT_STOP`. It also stands in for the departure delay at that stop (stated limitation; dwell is not modeled).
 
 ### 4.4 Access legs
 
@@ -144,7 +147,7 @@ Do not add new dependencies without a clear reason. Prefer the standard library,
 
 For each Candidate, N ≈ 2,000 samples:
 1. Sample drive time (cached duration × a stated variance assumption; there is no observed drive variance).
-2. For each rail leg, sample **one whole historical run** from the appropriate pool, so boarding-stop and Penn delays stay correlated.
+2. For each rail leg, sample **one whole historical run** from the appropriate pool, so boarding-stop and Penn delays stay correlated. Sample **only runs observed at both the leg's boarding and alighting stops**; that effective count is what `PoolUsage.run_count` reports (and what the fallback threshold applies to).
 3. If the sampled drive misses the planned train, move to the next departure from the same station toward Penn.
 4. For transfers, compare sampled arrival of leg 1 with sampled departure of leg 2; a miss cascades to the next train.
 5. PATH legs: **assumed on schedule**, with a missed-connection penalty of one headway wait. Label PATH legs "assumed, not measured" in the UI.
@@ -172,6 +175,12 @@ where `cost_of_lateness` comes from the user (value of time, extra parking, or a
 Implement as frozen dataclasses (or equivalent typed structures) in one module. Do not pass loose dicts between modules.
 
 **Leg:** mode (drive / rail / PATH / walk) · from stop · to stop · scheduled departure · scheduled arrival · train number (rail only) · GTFS line · direction.
+
+**Stop identifiers in legs** (same keys as `data/reference/infra.csv`):
+- NJ Transit stops: the 2-char station code (GTFS `stop_code`, e.g. `CM`, `NP`, `NY`). Secaucus = **`SE`** (upper level; the level NY-bound NEC/NJCL/M&E trains use, verified against the observations: all 148 Secaucus rows on NY-bound runs are SE). `TS` (lower level) serves only Hoboken-bound Main/Bergen/Pascack trains.
+- PATH stops: `"PATH:<stop_name>"`, e.g. `PATH:Hoboken`, `PATH:33rd Street`.
+- Non-station endpoints: `ORIGIN` for the trip origin.
+- **Cross-system transfers require an explicit WALK leg**, e.g. `HB` → `PATH:Hoboken`, `PATH:33rd Street` → `NY`. `Candidate` rejects legs that do not connect stop to stop.
 
 **Candidate** (router or safety net → scorer): access station · ordered legs · itemized costs (fuel, tolls, parking, fare, PATH fare) · base cost · exposure tags · source (`"router"` or `"safety_net"`).
 

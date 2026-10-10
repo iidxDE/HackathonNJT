@@ -62,9 +62,20 @@ def test_non_contiguous_legs_rejected():
         Candidate("CM", (a, b), CostBreakdown(), frozenset(), "router")
 
 
+def test_cross_system_transfer_needs_explicit_walk_leg():
+    rail = Leg(LegMode.RAIL, "CM", "HB", utc(11, 0), utc(11, 50),
+               train_number="0412", gtfs_line="7", direction=0)
+    path = Leg(LegMode.PATH, "PATH:Hoboken", "PATH:33rd Street", utc(12, 0), utc(12, 15))
+    with pytest.raises(ValueError):
+        Candidate("CM", (rail, path), CostBreakdown(), frozenset(), "safety_net")
+    walk = Leg(LegMode.WALK, "HB", "PATH:Hoboken", utc(11, 50), utc(11, 55))
+    c = Candidate("CM", (rail, walk, path), CostBreakdown(), {InfraAsset.PATH_TUNNELS}, "safety_net")
+    assert c.n_transfers == 1
+
+
 def test_delay_samples_read_only_and_counts_runs():
     ds = DelaySamples(np.zeros((12, 3)), ("CM", "ST", "NY"),
-                      PoolKey("7", 1, "am_peak"), FallbackLevel.LINE_DIRECTION_PERIOD)
+                      PoolKey("7", True, "am_peak"), FallbackLevel.LINE_TOWARD_NY_PERIOD)
     assert ds.run_count == 12
     with pytest.raises(ValueError):
         ds.delays_s[0, 0] = 1.0

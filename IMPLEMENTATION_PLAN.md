@@ -63,7 +63,7 @@ Build plan for HackRU Fall 2026. Read alongside `CLAUDE.md` (architecture, contr
 ## Phase 1 — Safety net (H1.5–H4) ★ most important phase
 
 **1.1 Delay pools (40 min)**
-- Pools keyed line × direction × period, storing **whole runs**.
+- Pools keyed line × toward_ny × period on `delay_vs_gtfs_s`, storing **whole runs**.
 - Fallback hierarchy with level + run count recorded.
 - Done when: Morris & Essex inbound AM peak pool has ~15+ runs; a deliberately empty cell falls back correctly.
 
@@ -204,3 +204,9 @@ Before sleeping: commit, push, confirm the `safety-net` tag runs from a clean ch
 | PostGIS | Cut | No visible value at this scale |
 | PATH reliability | Assumed on schedule + headway penalty | No PATH data collected |
 | Evaluation | Time-block split + weekend robustness | Avoid leakage; honest framing |
+| Delay measure (review 10-10 14:10) | Pools and scorer use `delay_vs_gtfs_s` only | 25 NY arrivals carry a feed schedule exactly 13 min later than GTFS. GTFS arrival_s == departure_s at NY (all 1,467 NY stop_times), so arrival_s changes nothing. Last-seen time in the feed confirms the trains really ran ~12 min behind the published time (median last_seen − GTFS: 11.8 min affected vs 0.1 min unaffected; last_seen − feed estimate −2.2 min). |
+| Pool direction key | `toward_ny` = trip terminal ∈ {NY, HB}, not `direction_id` | NJT direction 0 also includes trips ending at Newark Penn, Long Branch, Atlantic City, Princeton (95 of 420 dir-0 runs) |
+| One delay per stop | Approach delay: last record with NEXT_STOP = stop; also used as the departure delay | Station-snapped feed has no separate departure event; dwell not modeled. Stated limitation |
+| Observation row selection | Positional last row per (service day, train, stop) | `groupby().last()` takes last non-null per column and can splice fields from different records |
+| Stop IDs in legs | NJT 2-char codes; PATH `PATH:<stop_name>`; Secaucus = SE; explicit WALK legs between systems | Same keys as infra.csv; Candidate enforces contiguous legs |
+| Scorer sampling (Phase 1.5) | Sample only runs observed at both boarding and alighting stops; report that count in `PoolUsage.run_count` | Not every stop of every run is observed; an unobserved stop must not become a silent zero |

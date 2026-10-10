@@ -79,6 +79,9 @@ STOP_MATCH_MAX_DIFF_S = 30 * 60
 STOP_SCHEDULE_AGREE_S = 120
 # Port Jervis runs to Hoboken, not Penn; out of scope (GTFS route_id 6).
 EXCLUDED_ROUTE_IDS: tuple[str, ...] = ("6",)
+# A trip is toward_ny if its terminal (last stop) is one of these stop_codes.
+# Pools key on toward_ny, not GTFS direction_id (NJT direction semantics vary by line).
+TOWARD_NY_TERMINALS: tuple[str, ...] = ("NY", "HB")
 
 OBSERVATIONS_PARQUET = ARTIFACTS_DIR / "observations.parquet"
 VEHICLE_RECORDS_PARQUET = ARTIFACTS_DIR / "vehicle_records.parquet"

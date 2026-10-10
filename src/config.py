@@ -27,7 +27,9 @@ GTFS_DIR = REFERENCE_DIR / "gtfs"
 GTFS_NJT_RAIL_DIR = GTFS_DIR / "njtransit_gtfs_rail"
 GTFS_PATH_DIR = GTFS_DIR / "PATH GTFS"
 
-FARES_CSV = REFERENCE_DIR / "fares.csv"
+FARES_CSV = REFERENCE_DIR / "njt_fares.csv"
+PATH_FARES_CSV = REFERENCE_DIR / "path_fares.csv"
+ALERT_SAMPLES_CSV = REFERENCE_DIR / "alert_samples.csv"  # hand-labeled; never regenerate over labels
 PARKING_CSV = REFERENCE_DIR / "parking.csv"
 DRIVING_COSTS_CSV = REFERENCE_DIR / "driving_costs.csv"
 TOLLS_MANUAL_CSV = REFERENCE_DIR / "tolls_manual.csv"

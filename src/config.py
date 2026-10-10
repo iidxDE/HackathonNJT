@@ -189,7 +189,7 @@ ROUTER_ACCESS_STATIONS: tuple[str, ...] = ("CM", "ST", "RT", "SE", "NP")
 # Where candidate options come from: "router" (RAPTOR, 2.3) or "safety_net"
 # (hard-coded station_options, kept as the regression reference).
 OPTION_SOURCES: tuple[str, ...] = ("router", "safety_net")
-DEFAULT_OPTION_SOURCE = "safety_net"
+DEFAULT_OPTION_SOURCE = "router"  # 2.4 gate: GO (eval/router_validation.md)
 
 
 def network_npz(service_date: date) -> Path:

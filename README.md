@@ -53,7 +53,10 @@ python -m src.build.drive_cache           # network: fills missing Routes API ca
 
 ```bash
 python -m src.safety_net --deadline 09:00   # candidates, costs, exposure
-python -m src.scoring                       # ranked table + core-claim sweep → eval/core_claim.md
+python -m src.build.network                 # router network (NJT rail + PATH, 10-13) → eval/network_report.md
+python -m src.scoring --source router       # ranked table + sweep from router options → eval/core_claim_router.md
+python -m src.scoring --source safety_net   # same from hard-coded options → eval/core_claim.md (regression)
+python -m src.routing.validate              # router vs hard-coded options + gate → eval/router_validation.md
 python -m pytest tests -q
 ```
 

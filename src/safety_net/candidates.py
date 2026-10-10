@@ -96,14 +96,27 @@ def solve_leave_home(drive_s: DriveTime, dest: str, arrive_by: datetime) -> tupl
         leave = new
         if done:
             break
+    # The tolerance can leave the arrival up to LEAVE_HOME_TOL_S late. If so, bisect
+    # for the latest on-time departure (arrival is non-decreasing in departure).
+    def arrives(t: datetime) -> datetime:
+        return t + timedelta(seconds=drive_s(dest, t))
+
+    if arrives(leave) > arrive_by:
+        lo, hi = leave - timedelta(hours=1), leave
+        if arrives(lo) > arrive_by:
+            raise ValueError(f"No departure within 1 h before {leave} reaches {dest} by {arrive_by}")
+        while (hi - lo).total_seconds() > 1:
+            mid = lo + (hi - lo) / 2
+            lo, hi = (mid, hi) if arrives(mid) <= arrive_by else (lo, mid)
+        leave = lo
     return leave, drive_s(dest, leave)
 
 
 def _access_legs(drive_s: DriveTime, dest: str, board_stop: str, board_dep: datetime,
-                 buffer_s: int) -> tuple[datetime, tuple[Leg, ...]]:
+                 buffer_s: int, margin_s: int) -> tuple[datetime, tuple[Leg, ...]]:
     """DRIVE ORIGIN -> LOT:dest, margin, WALK(buffer) LOT:dest -> board_stop."""
     walk_start = board_dep - timedelta(seconds=buffer_s)
-    park_by = walk_start - timedelta(seconds=config.SAFETY_MARGIN_S)
+    park_by = walk_start - timedelta(seconds=margin_s)
     leave, d = solve_leave_home(drive_s, dest, park_by)
     lot = f"LOT:{dest}"
     drive = Leg(LegMode.DRIVE, "ORIGIN", lot, leave, leave + timedelta(seconds=d))
@@ -116,7 +129,8 @@ def _hhmm(t: datetime) -> str:
 
 
 def plan_station(options: list[Option], station: str, drive_dest: str, deadline: datetime,
-                 drive_s: DriveTime, label: str, service_date: date) -> Candidate:
+                 drive_s: DriveTime, label: str, service_date: date,
+                 margin_s: int = config.SAFETY_MARGIN_S) -> Candidate:
     """Pick the planned option and catch-next list; build the access legs."""
     if not options:
         return Candidate(station, (), None, None, "safety_net", label=label, infeasible=True,
@@ -129,19 +143,20 @@ def plan_station(options: list[Option], station: str, drive_dest: str, deadline:
                    key=lambda o: (o[0].sched_dep, o[-1].sched_arr))
     catch_next = (planned, *later[:config.CATCH_NEXT_K])
     leave, access = _access_legs(drive_s, drive_dest, planned[0].from_stop, planned[0].sched_dep,
-                                 config.STATION_BUFFER_S[station])
+                                 config.STATION_BUFFER_S[station], margin_s)
     reason = (f"no train arrives by {_hhmm(deadline)}; earliest arrives {_hhmm(planned[-1].sched_arr)}"
               if infeasible else None)
     return Candidate(station, access + planned, None, None, "safety_net", catch_next=catch_next,
                      leave_home=leave, infeasible=infeasible, infeasible_reason=reason, label=label)
 
 
-def drive_all_the_way(deadline: datetime, drive_s: DriveTime) -> Candidate:
+def drive_all_the_way(deadline: datetime, drive_s: DriveTime,
+                      margin_s: int = config.SAFETY_MARGIN_S) -> Candidate:
     """Reference row: drive to a Midtown garage, walk to Penn. Not priced."""
     walk_s = config.GARAGE_TO_PENN_WALK_S
     walk_start = deadline - timedelta(seconds=walk_s)
     leave, d = solve_leave_home(drive_s, config.GARAGE_DEST,
-                                walk_start - timedelta(seconds=config.SAFETY_MARGIN_S))
+                                walk_start - timedelta(seconds=margin_s))
     lot = f"LOT:{config.GARAGE_DEST}"
     legs = (Leg(LegMode.DRIVE, "ORIGIN", lot, leave, leave + timedelta(seconds=d)),
             Leg(LegMode.WALK, lot, NY, walk_start, deadline))
@@ -151,13 +166,14 @@ def drive_all_the_way(deadline: datetime, drive_s: DriveTime) -> Candidate:
 
 def build_candidates(njt: GtfsFeed, path: GtfsFeed, drive_s: DriveTime,
                      service_date: date = config.DEMO_SERVICE_DATE,
-                     deadline_s: int = config.DEMO_DEADLINE_S) -> list[Candidate]:
+                     deadline_s: int = config.DEMO_DEADLINE_S,
+                     margin_s: int = config.SAFETY_MARGIN_S) -> list[Candidate]:
     """The 7 safety-net candidates for an arrive-by deadline at NY Penn (local seconds)."""
     deadline = to_utc(service_date, deadline_s)
     cands = [plan_station(direct_options(njt, service_date, s), s, s, deadline, drive_s,
-                          f"{s} → NY", service_date)
+                          f"{s} → NY", service_date, margin_s)
              for s in DIRECT_STATIONS]
     cands.append(plan_station(hoboken_path_options(njt, path, service_date, "CM"), "CM", "CM",
-                              deadline, drive_s, "CM → HB + PATH", service_date))
-    cands.append(drive_all_the_way(deadline, drive_s))
+                              deadline, drive_s, "CM → HB + PATH", service_date, margin_s))
+    cands.append(drive_all_the_way(deadline, drive_s, margin_s))
     return cands

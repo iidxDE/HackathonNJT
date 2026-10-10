@@ -138,7 +138,12 @@ FEED_DELAY_STOPS: tuple[str, ...] = ("NY",)
 
 # --- Monte Carlo -------------------------------------------------------------
 N_SAMPLES = 2_000
-DEFAULT_SEED = 20261012
+DEFAULT_SEED = 42
+
+# --- Scorer user settings (defaults = demo preset) ---------------------------
+DEFAULT_VOT_USD_PER_H = 30.0  # value of time: door-to-Penn time and lateness
+DEFAULT_HARD_PENALTY_USD = 75.0  # flat cost of arriving late at all (0 = soft mode)
+LATE_CAP_MIN = 60  # no catchable train: arrival = deadline + this (censored)
 
 # Drive time per sample: triangular(OPTIMISTIC, BEST_GUESS, PESSIMISTIC) from
 # the Routes API traffic models (sorted first). No invented spread.

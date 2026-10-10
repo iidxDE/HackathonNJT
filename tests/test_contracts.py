@@ -113,7 +113,7 @@ def test_delay_samples_reject_nan():
 def test_scored_option_validates_probability():
     c = chatham_candidate()
     with pytest.raises(ValueError):
-        ScoredOption(c, 1.2, utc(11, 45), utc(11, 55), 0.0, 20.0)
+        ScoredOption(c, 1.2, utc(11, 45), utc(11, 55), 0.0, 0.0, {}, 20.0, 10.0, 0.0, 30.0)
 
 
 def test_periods_cover_day_without_gaps():

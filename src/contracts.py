@@ -50,6 +50,7 @@ class DelayField(str, Enum):
 
 class AssumptionFlag(str, Enum):
     PATH_UNMEASURED = "path_unmeasured"
+    PATH_DELAY_NOT_MODELED = "path_delay_not_modeled"  # PATH runs to schedule (Phase 1)
     DRIVE_VARIANCE_ASSUMED = "drive_variance_assumed"
     DRIVE_VARIANCE_DEGENERATE = "drive_variance_degenerate"  # all three traffic models equal
     DRIVE_SLOT_EXTRAPOLATED = "drive_slot_extrapolated"  # departure outside cached slots
@@ -320,23 +321,48 @@ class PoolUsage:
 
 @dataclass(frozen=True)
 class ScoredOption:
-    """Scorer → UI."""
+    """Scorer → UI. Money and costs in USD, lateness in minutes, times UTC.
+
+    Simulation fields are None when the candidate has no legs (no eligible
+    train). gen_cost = money + time_cost + exp_late_cost; it is None while
+    money is not priced (drive-all-the-way reference row). rank orders by
+    gen_cost, sched_rank by money + time_cost only (no risk); infeasible
+    candidates rank after feasible ones; unrankable rows have rank None.
+    """
 
     candidate: Candidate
-    p_on_time: float  # 0–1
-    arrival_p50: datetime  # UTC
-    arrival_p90: datetime  # UTC
-    expected_late_min: float
-    risk_adjusted_cost_usd: float
+    p_on_time: float | None  # 0–1
+    arrival_p50: datetime | None
+    arrival_p90: datetime | None
+    expected_late_min: float | None
+    censored_share: float | None  # draws with no catchable train
+    train_taken_share: Mapping[str, float]  # train number (or "none") → share of draws
+    money_usd: float | None  # CostBreakdown.total_usd (may be partial)
+    time_cost_usd: float | None  # VOT × (deadline − leave_home)
+    exp_late_cost_usd: float | None  # mean(VOT × L + hard_penalty × 1(L > 0))
+    gen_cost_usd: float | None
+    rank: int | None = None
+    sched_rank: int | None = None
     pools: tuple[PoolUsage, ...] = ()
-    active_alerts: tuple[str, ...] = ()
+    flags: frozenset[str] = frozenset()
     assumption_flags: frozenset[AssumptionFlag] = field(default_factory=frozenset)
+    active_alerts: tuple[str, ...] = ()
+    seed: int | None = None
+    n_samples: int = 0
 
     def __post_init__(self) -> None:
-        if not 0.0 <= self.p_on_time <= 1.0:
+        if self.p_on_time is not None and not 0.0 <= self.p_on_time <= 1.0:
             raise ValueError(f"p_on_time must be in [0, 1], got {self.p_on_time}")
-        _require_utc("arrival_p50", self.arrival_p50)
-        _require_utc("arrival_p90", self.arrival_p90)
-        if self.arrival_p90 < self.arrival_p50:
+        for name in ("arrival_p50", "arrival_p90"):
+            value = getattr(self, name)
+            if value is not None:
+                _require_utc(name, value)
+        if self.arrival_p50 and self.arrival_p90 and self.arrival_p90 < self.arrival_p50:
             raise ValueError("arrival_p90 is earlier than arrival_p50")
+        object.__setattr__(self, "train_taken_share", dict(self.train_taken_share))
+        object.__setattr__(self, "flags", frozenset(self.flags))
         object.__setattr__(self, "assumption_flags", frozenset(self.assumption_flags))
+
+    @property
+    def candidate_id(self) -> str:
+        return self.candidate.label or self.candidate.access_station

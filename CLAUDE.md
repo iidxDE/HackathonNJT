@@ -159,16 +159,17 @@ Do not add new dependencies without a clear reason. Prefer the standard library,
 
 ### 4.8 Scorer (Monte Carlo)
 
-For each Candidate, N ≈ 2,000 samples:
-1. Sample drive time: triangular(min = OPTIMISTIC, mode = BEST_GUESS, max = PESSIMISTIC) from the Routes API traffic models, sorted first. If all three are equal, zero variance and a `drive_variance_degenerate` flag. No invented spread.
-2. For each rail leg, sample **one whole historical run** from the appropriate pool, so boarding-stop and Penn delays stay correlated. Sample **only runs observed at both the leg's boarding and alighting stops**; that effective count is what `PoolUsage.run_count` reports (and what the fallback threshold applies to).
-3. If the sampled drive misses the planned train, move to the next departure from the same station toward Penn.
-4. For transfers, compare sampled arrival of leg 1 with sampled departure of leg 2; a miss cascades to the next train.
-5. PATH legs: **assumed on schedule**, with a missed-connection penalty of one headway wait. Label PATH legs "assumed, not measured" in the UI.
+`src/scoring/scorer.py`; N = 2,000 draws per candidate, vectorized, explicit seed (default 42).
+1. **Drive:** u_i ~ U(0,1) **shared across candidates** (common random numbers); drive_i = triangular inverse CDF at u_i over (OPTIMISTIC, BEST_GUESS, PESSIMISTIC), sorted, interpolated at leave_home. No invented spread; all equal → `drive_variance_degenerate`. ready_i = leave_home + drive_i + station buffer.
+2. **Rail:** each catch-next train draws (board, alight) delay from **one whole historical run** (`pools.sample`; L1 needs runs observed at both stops, and that effective count is `PoolUsage.run_count`). board = max(0, board). Trains are drawn independently of each other.
+3. **Catching:** train k is catchable if ready_i ≤ sched_dep_k + board_k. The rider takes the catchable train with the **earliest scheduled arrival**; arrival = sched_arr + alight. Nothing catchable → arrival = deadline + `LATE_CAP_MIN` (censored, reported as `censored_share`).
+4. **Hoboken + PATH:** HB actual arrival + transfer walk → next scheduled PATH departure → 33rd St + egress walk. PATH runs to schedule: **assumed, not measured** (UI label).
+5. **Drive all the way:** arrival = leave_home + drive_i + garage walk.
+6. L_i = max(0, arrival_i − deadline) minutes. `gen_cost = money + VOT × (deadline − leave_home) + mean(VOT × L + hard_penalty × 1(L > 0))`; VOT ($30/h) and hard_penalty ($75 demo preset; 0 = soft mode) are user settings.
 
-Outputs: P(on time), arrival p50 / p90, expected late minutes, and
-`risk_adjusted_cost = base_cost + Σ P(late in bucket) × cost_of_lateness(bucket)`,
-where `cost_of_lateness` comes from the user (value of time, extra parking, or a fixed hard-deadline penalty).
+**Ranking:** `rank` by gen_cost, `sched_rank` by money + time cost only (no risk). Infeasible candidates go last; drive-all-the-way is a reference row (shown, not ranked) while money is not priced; partial costs are ranked but flagged.
+
+**Core-claim check:** `python -m src.scoring` writes `eval/core_claim.md` (demo preset + hard_penalty {0, 25, 75, 150} × margin {0, 5, 10} sweep, leave_home re-planned per margin).
 
 ### 4.9 Alerts (Gemini)
 
@@ -204,7 +205,7 @@ Implement as frozen dataclasses (or equivalent typed structures) in one module. 
 
 **PoolUsage** (per rail leg, for the UI): pool key · fallback level · effective run count · delay field per stop (`delay_vs_gtfs_s` / `delay_s` / `assumed_zero`) · train number.
 
-**ScoredOption** (scorer → UI): the Candidate · P(on time) · arrival p50 · arrival p90 · expected late minutes · risk-adjusted cost · active alerts · assumption flags (e.g. PATH unmeasured).
+**ScoredOption** (scorer → UI): the Candidate (candidate_id, leave_home, planned train) · P(on time) · arrival p50 / p90 · expected late minutes · censored share · train_taken_share · money (may be partial) · time cost · expected late cost · gen_cost · rank · sched_rank · pool usage (one per train used) · flags (partial, infeasible, l4_pool, drive_variance_degenerate, exposure_varies, censored, cost flags) · assumption flags · active alerts · seed · N. Simulation fields are None for candidates with no legs.
 
 ---
 

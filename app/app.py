@@ -281,5 +281,5 @@ st.caption("Exposure: the Portal bridges matter only while the final cutover (Oc
            "tunnels open, planned for the 2030s.")
 st.caption("Caveats: about one weekday of AM-peak data; the M&E → HB population is 7 runs (boarding delay "
            "zero-filled where the boarding stop was not observed); PATH runs to schedule (not measured); "
-           "cancelled runs are invisible; the NY delay measure is provisional (check A).")
+           "cancelled runs are invisible; NY delay = SEC_LATE (the feed's NY time includes a terminal dwell, check A).")
 st.caption(f"Build {pipeline.build_stamp()} · N = {config.N_SAMPLES}, seed {config.DEFAULT_SEED}.")

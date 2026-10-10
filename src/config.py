@@ -127,7 +127,9 @@ POOL_MIN_RUNS = 5
 # Weekend service is a separate robustness set (CLAUDE.md §6), not pooled.
 POOL_WEEKDAYS_ONLY = True
 
-# Delay measure per stop (check A, 10-10, PROVISIONAL). At FEED_DELAY_STOPS,
+# Delay measure per stop (check A, 10-10; confirmed: NJT getStationSchedule has
+# DWELL_TIME = 780 at NY on exactly the offset runs, so the feed's NY time is
+# arrival + terminal dwell and SEC_LATE is the arrival delay). At FEED_DELAY_STOPS,
 # 26 of 206 NY-terminating runs carry a feed schedule exactly 780 s later than
 # GTFS, so delay_vs_gtfs_s jumps ~+766 s (median) from the previous stop while
 # SEC_LATE moves ~+2 s. "feed": use delay_s (SEC_LATE) at those stops and

@@ -182,7 +182,7 @@ def write_evidence(table: pd.DataFrame, path: Path = EVIDENCE_MD, diagnostic: st
         "population = runs of the line × toward_ny × period observed there; boarding delay = that "
         "run's observed delay, 0 if unobserved (board_zero_share). Fallback L1 → L2 → L3. Alight delay in minutes over the "
         "effective runs at the chosen level (`delay_s` at NY, `delay_vs_gtfs_s` elsewhere; "
-        "check A, provisional). Cancelled runs are invisible (optimistic bias).\n\n"
+        "check A: feed NY time includes terminal dwell). Cancelled runs are invisible (optimistic bias).\n\n"
         + _md_table(table) + "\n" + diagnostic, encoding="utf-8")
 
 

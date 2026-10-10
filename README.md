@@ -61,4 +61,4 @@ python -m pytest tests -q
 
 About one weekday of observed delays (Fri 10-09 AM peak); Chatham → Hoboken has 5 effective runs.
 PATH delays are not measured (scheduled times). Drive-time spread comes from Google's traffic
-models, not observation. Prices are dated snapshots. The NY delay measure is provisional (check A).
+models, not observation. Prices are dated snapshots. The NY delay measure uses SEC_LATE (check A: the feed's NY time includes a 13-min terminal dwell).

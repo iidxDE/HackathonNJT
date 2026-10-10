@@ -111,7 +111,7 @@ def main() -> None:
         f"the station alone differs in {n_station} of {len(sw)}.**\n\n"
         "Caveats: about one weekday of AM-peak data; the M&E → HB population is 7 runs (boarding delay "
         "zero-filled where the boarding stop was not observed); PATH runs to schedule (not measured); cancelled runs are "
-        "invisible; NY delay uses feed-relative SEC_LATE (provisional, check A).\n",
+        "invisible; NY delay uses feed-relative SEC_LATE (check A: feed NY time includes terminal dwell).\n",
         encoding="utf-8")
     print(f"wrote {CORE_CLAIM_MD}")
 

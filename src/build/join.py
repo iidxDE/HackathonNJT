@@ -69,13 +69,15 @@ def build_stop_index(feed: GtfsFeed, service_dates: Iterable[date]) -> pd.DataFr
     if len(dupes):
         log.info("stop index: %d trips share a (service day, train number); numbers: %s",
                  len(dupes), sorted(dupes["train_number"].unique())[:10])
-    st = feed.stop_times[["trip_id", "stop_id", "stop_sequence", "departure_s"]]
+    st = feed.stop_times[["trip_id", "stop_id", "stop_sequence", "arrival_s", "departure_s"]]
     index = trips.merge(st, on="trip_id").merge(stops, on="stop_id", how="left")
     terminal = (index.sort_values("stop_sequence")
                      .drop_duplicates("trip_id", keep="last")
-                     .set_index("trip_id")["stop_code"])
-    index["toward_ny"] = index["trip_id"].map(terminal.isin(config.TOWARD_NY_TERMINALS))
-    return index
+                     .set_index("trip_id"))
+    index["toward_ny"] = index["trip_id"].map(terminal["stop_code"].isin(config.TOWARD_NY_TERMINALS))
+    # Scheduled arrival at the trip's terminal (GTFS seconds): sets the run's pool period.
+    index["terminal_arr_s"] = index["trip_id"].map(terminal["arrival_s"])
+    return index.drop(columns="arrival_s")
 
 
 def join_records(records: pd.DataFrame, stop_index: pd.DataFrame,
@@ -124,7 +126,7 @@ def join_records(records: pd.DataFrame, stop_index: pd.DataFrame,
     best = (cand.sort_values(["ok", "time_diff_s"], ascending=[False, True])
                 .drop_duplicates("rec_idx").set_index("rec_idx"))
     cols = ["service_day", "day_shift_s", "service_day_rule", "trip_id", "route_id",
-            "direction_id", "toward_ny", "stop_id", "stop_code", "stop_sequence", "departure_s",
+            "direction_id", "toward_ny", "terminal_arr_s", "stop_id", "stop_code", "stop_sequence", "departure_s",
             "time_diff_s", "ok"]
     out = recs.join(best[cols], on="rec_idx").drop(columns="rec_idx")
     trip_found = out["trip_id"].notna()
@@ -188,15 +190,22 @@ def build_observations(joined: pd.DataFrame,
     departure delay there (stated limitation). delay_s is SEC_LATE (vs the
     feed's own schedule). delay_vs_gtfs_s is the estimated time (feed
     schedule + SEC_LATE) minus the GTFS time: lateness against the published
-    timetable, and the only delay pools and the scorer use.
+    timetable. Which of the two a pool uses at each stop is decided in
+    src/build/pools.py (config.TERMINAL_DELAY_SOURCE).
     """
     m = joined[(joined["join_status"] == "matched")
                & ~joined["route_id"].isin(list(excluded_route_ids))]
-    keys = ["service_day", "train_number", "stop_sequence"]
+    # Run id = (service day, train number, trip_id); trip_id guards against a
+    # train number reused by two trips on one service day.
+    keys = ["service_day", "train_number", "trip_id", "stop_sequence"]
     o = last_record_per_stop(m, keys)
-    gtfs_local = o["service_day"] + pd.to_timedelta(
-        o["departure_s"].astype(float) + o["day_shift_s"].astype(float), unit="s")
-    gtfs_utc = gtfs_local.dt.tz_localize(config.LOCAL_TZ).dt.tz_convert("UTC")
+
+    def gtfs_to_utc(gtfs_s: pd.Series) -> pd.Series:
+        local = o["service_day"] + pd.to_timedelta(
+            gtfs_s.astype(float) + o["day_shift_s"].astype(float), unit="s")
+        return local.dt.tz_localize(config.LOCAL_TZ).dt.tz_convert("UTC")
+
+    gtfs_utc = gtfs_to_utc(o["departure_s"])
     est_utc = o["sched_dep_utc"] + pd.to_timedelta(o["delay_s"], unit="s")
     obs = pd.DataFrame({
         "service_date": o["service_day"].dt.date,
@@ -205,6 +214,7 @@ def build_observations(joined: pd.DataFrame,
         "route_id": o["route_id"],
         "direction_id": o["direction_id"].astype(int),
         "toward_ny": o["toward_ny"].astype(bool),
+        "terminal_arr_utc": gtfs_to_utc(o["terminal_arr_s"]),
         "stop_id": o["stop_id"],
         "stop_code": o["stop_code"],
         "stop_sequence": o["stop_sequence"].astype(int),
@@ -217,12 +227,12 @@ def build_observations(joined: pd.DataFrame,
         "observed_utc": o["last_modified_utc"],
         "n_records": o["n_records"].astype(int),
         "service_day_rule": o["service_day_rule"],
-    }).sort_values(["service_date", "train_number", "stop_sequence"]).reset_index(drop=True)
+    }).sort_values(["service_date", "train_number", "trip_id", "stop_sequence"]).reset_index(drop=True)
 
-    n_runs = obs.groupby(["service_date", "train_number"]).ngroups
+    n_runs = obs.groupby(["service_date", "train_number", "trip_id"]).ngroups
     log.info("observations: %d run×stop rows, %d runs (excluded routes %s)",
              len(obs), n_runs, list(excluded_route_ids))
-    runs = obs.drop_duplicates(["service_date", "train_number"])
+    runs = obs.drop_duplicates(["service_date", "train_number", "trip_id"])
     log.info("runs by route_id × toward_ny:\n%s",
              runs.pivot_table(index="route_id", columns="toward_ny", values="train_number",
                               aggfunc="count", fill_value=0).to_string())

@@ -1,6 +1,7 @@
 """Offline build: python -m src.build
 
-Raw archive + GTFS → data/artifacts/ (snapshots, joined records, observations).
+Raw archive + GTFS → data/artifacts/ (snapshots, joined records,
+observations, delay pools).
 Rerunnable; reads data/raw/ only, never writes to it.
 """
 
@@ -10,7 +11,7 @@ import logging
 from datetime import timedelta
 
 from src import config
-from src.build import clean, join
+from src.build import clean, join, pools
 from src.gtfs import load_feed
 
 log = logging.getLogger("src.build")
@@ -34,11 +35,13 @@ def main() -> None:
     joined = join.join_records(records, stop_index, names)
     rates = join.log_join_rates(joined)
     observations = join.build_observations(joined)
+    pool_table = pools.build_pools(observations)
 
     snapshots.to_parquet(config.SNAPSHOTS_PARQUET, index=False)
     joined.to_parquet(config.VEHICLE_RECORDS_PARQUET, index=False)
     observations.to_parquet(config.OBSERVATIONS_PARQUET, index=False)
     rates.to_csv(config.JOIN_RATES_CSV)
+    pool_table.to_parquet(config.POOLS_PARQUET, index=False)
     log.info("wrote artifacts to %s", config.ARTIFACTS_DIR)
 
 

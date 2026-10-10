@@ -89,18 +89,31 @@ SNAPSHOTS_PARQUET = ARTIFACTS_DIR / "snapshots.parquet"
 JOIN_RATES_CSV = ARTIFACTS_DIR / "join_rates.csv"
 
 # --- Delay pools -------------------------------------------------------------
-# (name, start_s, end_s), half-open, local time of day. Covers 00:00–24:00;
-# GTFS times past 24:00 are taken modulo SECONDS_PER_DAY before lookup.
+POOLS_PARQUET = ARTIFACTS_DIR / "pools.parquet"
+
+# A run's period comes from its scheduled arrival at its GTFS terminal, local
+# time of day. (name, start_s, end_s), half-open; covers 00:00–24:00. GTFS
+# times past 24:00 become wall-clock time before lookup.
 PERIODS: tuple[tuple[str, int, int], ...] = (
-    ("overnight", 0, 5 * 3600),
-    ("early", 5 * 3600, 6 * 3600),
-    ("am_peak", 6 * 3600, 9 * 3600 + 30 * 60),
-    ("shoulder_am", 9 * 3600 + 30 * 60, 11 * 3600),
-    ("midday", 11 * 3600, 15 * 3600 + 30 * 60),
-    ("pm_peak", 15 * 3600 + 30 * 60, 19 * 3600),
-    ("evening", 19 * 3600, SECONDS_PER_DAY),
+    ("early", 0, 6 * 3600),
+    ("am_peak", 6 * 3600, 10 * 3600),
+    ("midday", 10 * 3600, 16 * 3600),
+    ("pm_peak", 16 * 3600, 19 * 3600 + 30 * 60),
+    ("evening", 19 * 3600 + 30 * 60, SECONDS_PER_DAY),
 )
-POOL_MIN_RUNS = 8  # below this, fall back to the next coarser pool level
+# Fall back to the next coarser level when the effective run count is below this.
+POOL_MIN_RUNS = 5
+# Weekend service is a separate robustness set (CLAUDE.md §6), not pooled.
+POOL_WEEKDAYS_ONLY = True
+
+# Delay measure per stop (check A, 10-10, PROVISIONAL). At FEED_DELAY_STOPS,
+# 26 of 206 NY-terminating runs carry a feed schedule exactly 780 s later than
+# GTFS, so delay_vs_gtfs_s jumps ~+766 s (median) from the previous stop while
+# SEC_LATE moves ~+2 s. "feed": use delay_s (SEC_LATE) at those stops and
+# delay_vs_gtfs_s elsewhere; "gtfs": delay_vs_gtfs_s everywhere.
+# HB showed no offset (0 of 150 runs), so it stays on delay_vs_gtfs_s.
+TERMINAL_DELAY_SOURCE = "feed"
+FEED_DELAY_STOPS: tuple[str, ...] = ("NY",)
 
 # --- Monte Carlo -------------------------------------------------------------
 N_SAMPLES = 2_000

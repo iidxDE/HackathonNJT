@@ -6,6 +6,7 @@ All datetimes are timezone-aware UTC. Money is USD, delays are seconds.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from enum import Enum
@@ -31,9 +32,18 @@ class InfraAsset(str, Enum):
 class FallbackLevel(str, Enum):
     """Delay pool granularity, finest first. Direction means toward_ny, not GTFS direction_id."""
 
-    LINE_TOWARD_NY_PERIOD = "line_toward_ny_period"
-    TOWARD_NY_PERIOD = "toward_ny_period"
-    TOWARD_NY = "toward_ny"
+    LINE_TOWARD_NY_PERIOD = "line_toward_ny_period"  # L1: runs observed at board AND alight
+    TOWARD_NY_PERIOD = "toward_ny_period"  # L2: runs observed at alight; board delay = 0
+    TOWARD_NY = "toward_ny"  # L3: as L2, all periods
+    NO_DATA = "no_data"  # L4: zero delays (schedule baseline); UI must warn
+
+
+class DelayField(str, Enum):
+    """Where a pooled delay value came from (traceability in PoolUsage)."""
+
+    GTFS = "delay_vs_gtfs_s"  # estimated time − published GTFS time
+    FEED = "delay_s"  # SEC_LATE, relative to the feed's own schedule
+    ASSUMED_ZERO = "assumed_zero"  # no observation used; delay set to 0
 
 
 class AssumptionFlag(str, Enum):
@@ -67,6 +77,7 @@ class Leg:
     train_number: str | None = None  # rail only, leading zeros stripped
     gtfs_line: str | None = None  # GTFS route_id
     direction: int | None = None  # GTFS direction_id
+    toward_ny: bool | None = None  # trip terminal in config.TOWARD_NY_TERMINALS (pool key)
 
     def __post_init__(self) -> None:
         _require_utc("sched_dep", self.sched_dep)
@@ -74,8 +85,9 @@ class Leg:
         if self.sched_arr < self.sched_dep:
             raise ValueError(f"Leg arrives before it departs: {self}")
         if self.mode is LegMode.RAIL:
-            if not self.train_number or self.gtfs_line is None or self.direction is None:
-                raise ValueError("Rail legs need train_number, gtfs_line and direction")
+            if (not self.train_number or self.gtfs_line is None or self.direction is None
+                    or self.toward_ny is None):
+                raise ValueError("Rail legs need train_number, gtfs_line, direction and toward_ny")
             object.__setattr__(self, "train_number", normalize_train_number(self.train_number))
         elif self.train_number is not None:
             raise ValueError(f"train_number is rail-only, got it on a {self.mode.value} leg")
@@ -157,36 +169,48 @@ class Candidate:
 
 @dataclass(frozen=True)
 class PoolKey:
-    """Delay pool cell; None means 'all' at coarser fallback levels."""
+    """Delay pool cell; None means 'all' at coarser fallback levels.
+
+    toward_ny=False is NOT "outbound": it is every trip whose terminal is not
+    NY or HB, which includes NY-direction trips ending at Newark Penn, Long
+    Branch, etc. as well as trips heading away from New York.
+    """
 
     line: str | None  # GTFS route_id
     toward_ny: bool | None  # trip terminates at NY or HB (config.TOWARD_NY_TERMINALS)
-    period: str | None
+    period: str | None  # config.PERIODS name, from the run's terminal arrival
 
 
 @dataclass(frozen=True, eq=False)
 class DelaySamples:
-    """Whole historical runs for one pool: delay model → scorer.
+    """Delay draws for one rail leg: delay model → scorer.
 
-    delays_s[i, j] is run i's delay in seconds at stop_ids[j] (NaN if unobserved).
-    Sample size is the number of runs, never the number of stop observations.
+    delays_s[i, j] is draw i's delay in seconds at stop_ids[j]. Each row is
+    one whole historical run drawn with replacement, so the stops in a row
+    stay correlated. run_count is the number of distinct runs the draws come
+    from (the sample size), never the number of draws or stop observations.
     """
 
-    delays_s: np.ndarray  # shape (run_count, len(stop_ids))
+    delays_s: np.ndarray  # shape (n_draws, len(stop_ids)); no NaN
     stop_ids: tuple[str, ...]
     pool_key: PoolKey
     fallback_level: FallbackLevel
+    run_count: int
 
     def __post_init__(self) -> None:
         arr = np.array(self.delays_s, dtype=float)  # copy, so freezing can't leak
         if arr.ndim != 2 or arr.shape[1] != len(self.stop_ids):
             raise ValueError(f"delays_s shape {arr.shape} does not match {len(self.stop_ids)} stops")
+        if np.isnan(arr).any():
+            raise ValueError("delays_s contains NaN; unobserved stops must not be sampled")
+        if self.run_count < 0:
+            raise ValueError(f"run_count must be >= 0, got {self.run_count}")
         arr.setflags(write=False)
         object.__setattr__(self, "delays_s", arr)
         object.__setattr__(self, "stop_ids", tuple(self.stop_ids))
 
     @property
-    def run_count(self) -> int:
+    def n_draws(self) -> int:
         return int(self.delays_s.shape[0])
 
 
@@ -194,14 +218,20 @@ class DelaySamples:
 class PoolUsage:
     """Which pool scored a rail leg, for the UI confidence indicator.
 
-    run_count is the effective sample: runs observed at both the leg's
-    boarding and alighting stops, not all runs in the pool.
+    run_count is the effective sample at the chosen level: at L1, runs
+    observed at both the boarding and alighting stops; at L2/L3, runs
+    observed at the alighting stop; 0 at NO_DATA. delay_field_at_stop says
+    which delay measure each stop's values came from.
     """
 
-    train_number: str
     pool_key: PoolKey
     fallback_level: FallbackLevel
     run_count: int
+    delay_field_at_stop: Mapping[str, DelayField]
+    train_number: str | None = None  # set by the scorer, which knows the leg
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "delay_field_at_stop", dict(self.delay_field_at_stop))
 
 
 @dataclass(frozen=True)

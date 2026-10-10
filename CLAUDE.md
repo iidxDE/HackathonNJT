@@ -107,11 +107,17 @@ Do not add new dependencies without a clear reason. Prefer the standard library,
 
 - Pool key: **line × toward_ny × period**, not hour and not train number.
   - `toward_ny` (bool, per trip) = the trip's GTFS terminal is NY or HB (`config.TOWARD_NY_TERMINALS`). Do **not** key on GTFS `direction_id`: NJT direction 0 also covers trips ending at Newark Penn, Long Branch, Atlantic City, etc.
-  - Periods: early (05–06), AM peak (06–09:30), shoulder (09:30–11); extend similarly for the rest of the day.
+  - Periods (`config.PERIODS`): early (<06:00), AM peak (06:00–10:00), midday (10:00–16:00), PM peak (16:00–19:30), evening (≥19:30). A run's period comes from its **scheduled arrival at its GTFS terminal**, NY local time; the same rule applies to the candidate's train at lookup.
+  - Weekday runs only (`config.POOL_WEEKDAYS_ONLY`); weekend runs are the robustness set (§6).
   - Do not pool by train number: the 10-12 timetable change moves start times by up to ±40 min.
-- **Fallback hierarchy** when a cell has fewer than ~8 runs: line × toward_ny × period → toward_ny × period (all lines) → toward_ny only. Record which level was used and the run count; the UI shows it as a confidence indicator.
+- **Fallback hierarchy**, first level with ≥ `config.POOL_MIN_RUNS` (5) effective runs:
+  - L1 line × toward_ny × period: runs observed at **both** the leg's stops; (board, alight) drawn together.
+  - L2 toward_ny × period (all lines): runs observed at the alight stop; board delay = 0.
+  - L3 toward_ny (all periods): as L2.
+  - L4 no data: zero delays (schedule baseline), run_count 0, UI warning.
+  Record level, key, run count and delay field per stop in `PoolUsage`; the UI shows it as a confidence indicator.
 - **Store whole runs, not independent stop delays.** Each sample is one historical run with its delay at every stop. Sample size = number of runs, never number of stop observations.
-- **Delay measure: `delay_vs_gtfs_s` only** (estimated time = feed schedule + SEC_LATE, minus the GTFS time). Never pool raw `SEC_LATE`: for some NY arrivals the feed's own schedule is 13 min later than the published GTFS time, so SEC_LATE understates lateness against the timetable riders use.
+- **Delay measure (`delay_used_s`, PROVISIONAL after check A, 10-10):** `delay_s` (SEC_LATE, feed-relative) at **NY** (`config.FEED_DELAY_STOPS`), `delay_vs_gtfs_s` (feed schedule + SEC_LATE − GTFS time) at every other stop, HB included. Switch with `config.TERMINAL_DELAY_SOURCE` (`feed` / `gtfs`). Reason: 26 of 206 NY-terminating runs carry a feed schedule exactly 780 s later than GTFS at NY only; on those runs `delay_vs_gtfs_s` jumps +766 s (median) from the previous stop while SEC_LATE moves +2 s, so the gap is most likely a schedule artifact. HB shows no offset. Neither field observes the actual NY arrival, so a real padded schedule is not fully ruled out.
 - **One delay per stop = the approach delay:** the last record seen while that stop was `NEXT_STOP`. It also stands in for the departure delay at that stop (stated limitation; dwell is not modeled).
 
 ### 4.4 Access legs
@@ -174,7 +180,7 @@ where `cost_of_lateness` comes from the user (value of time, extra parking, or a
 
 Implement as frozen dataclasses (or equivalent typed structures) in one module. Do not pass loose dicts between modules.
 
-**Leg:** mode (drive / rail / PATH / walk) · from stop · to stop · scheduled departure · scheduled arrival · train number (rail only) · GTFS line · direction.
+**Leg:** mode (drive / rail / PATH / walk) · from stop · to stop · scheduled departure · scheduled arrival · train number (rail only) · GTFS line · direction · toward_ny (rail only, required; the pool key).
 
 **Stop identifiers in legs** (same keys as `data/reference/infra.csv`):
 - NJ Transit stops: the 2-char station code (GTFS `stop_code`, e.g. `CM`, `NP`, `NY`). Secaucus = **`SE`** (upper level; the level NY-bound NEC/NJCL/M&E trains use, verified against the observations: all 148 Secaucus rows on NY-bound runs are SE). `TS` (lower level) serves only Hoboken-bound Main/Bergen/Pascack trains.
@@ -184,7 +190,9 @@ Implement as frozen dataclasses (or equivalent typed structures) in one module. 
 
 **Candidate** (router or safety net → scorer): access station · ordered legs · itemized costs (fuel, tolls, parking, fare, PATH fare) · base cost · exposure tags · source (`"router"` or `"safety_net"`).
 
-**DelaySamples** (model → scorer): array of whole-run delay samples · pool key used · fallback level · run count.
+**DelaySamples** (model → scorer): draws × stops array of whole-run delay samples (no NaN) · pool key used · fallback level · run count (distinct effective runs, not draws).
+
+**PoolUsage** (per rail leg, for the UI): pool key · fallback level · effective run count · delay field per stop (`delay_vs_gtfs_s` / `delay_s` / `assumed_zero`) · train number.
 
 **ScoredOption** (scorer → UI): the Candidate · P(on time) · arrival p50 · arrival p90 · expected late minutes · risk-adjusted cost · active alerts · assumption flags (e.g. PATH unmeasured).
 

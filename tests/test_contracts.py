@@ -26,7 +26,7 @@ def utc(h: int, m: int) -> datetime:
 def chatham_candidate() -> Candidate:
     drive = Leg(LegMode.DRIVE, "ORIGIN", "CM", utc(10, 40), utc(10, 50))
     rail = Leg(LegMode.RAIL, "CM", "NY", utc(10, 58), utc(11, 45),
-               train_number="0626", gtfs_line="7", direction=1)
+               train_number="0626", gtfs_line="7", direction=1, toward_ny=True)
     return Candidate(
         access_station="CM",
         legs=(drive, rail),
@@ -64,7 +64,7 @@ def test_non_contiguous_legs_rejected():
 
 def test_cross_system_transfer_needs_explicit_walk_leg():
     rail = Leg(LegMode.RAIL, "CM", "HB", utc(11, 0), utc(11, 50),
-               train_number="0412", gtfs_line="7", direction=0)
+               train_number="0412", gtfs_line="7", direction=0, toward_ny=True)
     path = Leg(LegMode.PATH, "PATH:Hoboken", "PATH:33rd Street", utc(12, 0), utc(12, 15))
     with pytest.raises(ValueError):
         Candidate("CM", (rail, path), CostBreakdown(), frozenset(), "safety_net")
@@ -73,12 +73,24 @@ def test_cross_system_transfer_needs_explicit_walk_leg():
     assert c.n_transfers == 1
 
 
-def test_delay_samples_read_only_and_counts_runs():
-    ds = DelaySamples(np.zeros((12, 3)), ("CM", "ST", "NY"),
-                      PoolKey("7", True, "am_peak"), FallbackLevel.LINE_TOWARD_NY_PERIOD)
-    assert ds.run_count == 12
+def test_rail_leg_requires_toward_ny():
+    with pytest.raises(ValueError):
+        Leg(LegMode.RAIL, "CM", "HB", utc(11, 0), utc(11, 50),
+            train_number="0412", gtfs_line="7", direction=0)
+
+
+def test_delay_samples_read_only_and_counts_runs_not_draws():
+    ds = DelaySamples(np.zeros((2000, 2)), ("CM", "HB"),
+                      PoolKey("7", True, "am_peak"), FallbackLevel.LINE_TOWARD_NY_PERIOD, run_count=12)
+    assert ds.run_count == 12 and ds.n_draws == 2000
     with pytest.raises(ValueError):
         ds.delays_s[0, 0] = 1.0
+
+
+def test_delay_samples_reject_nan():
+    with pytest.raises(ValueError):
+        DelaySamples(np.array([[0.0, np.nan]]), ("CM", "HB"),
+                     PoolKey("7", True, "am_peak"), FallbackLevel.LINE_TOWARD_NY_PERIOD, run_count=1)
 
 
 def test_scored_option_validates_probability():

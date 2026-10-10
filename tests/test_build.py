@@ -128,6 +128,8 @@ def test_observation_uses_last_record_and_gtfs_delay():
     assert obs.loc["NY", "sched_dep_utc"] == pd.Timestamp("2026-10-09T11:50", tz="UTC")
     assert obs.loc["CM", "delay_vs_gtfs_s"] == 30
     assert obs["toward_ny"].all()
+    # Terminal arrival (NY 07:50 local) is a run attribute, on every stop row.
+    assert (obs["terminal_arr_utc"] == pd.Timestamp("2026-10-09T11:50", tz="UTC")).all()
 
 
 @pytest.mark.parametrize("staleness_s,expect_stale", [(60, False), (300, True)])

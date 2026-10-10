@@ -39,6 +39,7 @@ class DriveEstimate:
     best_guess_s: float  # BEST_GUESS as returned (for planning; may lie outside low–high order)
     distance_m: float
     toll_usd: float  # NaN if Google expects tolls but gave no price
+    fetched_at: str = ""  # ISO date the nearest BEST_GUESS slot was fetched (source date)
     flags: frozenset[AssumptionFlag] = field(default_factory=frozenset)
 
 
@@ -69,7 +70,11 @@ def lookup(cache: pd.DataFrame, dest: str, depart_utc: datetime | pd.Timestamp) 
     best = rows[rows["model"] == BEST_GUESS]
     nearest = best.iloc[int(np.argmin(np.abs([s.timestamp() - t_s for s in best["slot_utc"]])))]
     return DriveEstimate(dest, t.to_pydatetime(), low, mode, high, best_guess, float(nearest["distance_m"]),
-                         float(nearest["toll_usd"]), frozenset(flags))
+                         float(nearest["toll_usd"]), _iso_date(nearest.get("fetched_at")), frozenset(flags))
+
+
+def _iso_date(value) -> str:
+    return "" if value is None or pd.isna(value) else pd.Timestamp(value).strftime("%Y-%m-%d")
 
 
 def sample_drive_s(est: DriveEstimate, n: int, rng: np.random.Generator) -> np.ndarray:

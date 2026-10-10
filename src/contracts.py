@@ -23,9 +23,11 @@ class LegMode(str, Enum):
 
 
 class InfraAsset(str, Enum):
-    PORTAL_BRIDGE = "portal_bridge"
+    """Fragile assets a leg traverses (infra.csv columns noted)."""
+
+    HACKENSACK_PORTAL = "hackensack_portal"  # Portal / Portal North bridges (infra.csv portal_bridge)
     NORTH_RIVER_TUNNELS = "north_river_tunnels"
-    PENN_STATION = "penn_station"
+    NY_PENN = "ny_penn"  # infra.csv penn_station
     PATH_TUNNELS = "path_tunnels"
 
 
@@ -100,31 +102,64 @@ class Leg:
 
 
 @dataclass(frozen=True)
-class CostBreakdown:
-    """Itemized base cost in USD. Garage fees count as parking."""
+class CostItem:
+    """One priced line in USD with its source. usd=None means unknown and needs a note."""
 
-    fuel_usd: float = 0.0
-    tolls_usd: float = 0.0
-    parking_usd: float = 0.0
-    fare_usd: float = 0.0  # NJ Transit origin–destination fare
-    path_fare_usd: float = 0.0
-    congestion_usd: float = 0.0  # Manhattan congestion charge (drive-all-the-way)
+    usd: float | None
+    source_url: str | None = None
+    checked_date: str | None = None  # ISO date the source was checked
+    note: str = ""
 
     def __post_init__(self) -> None:
-        for name, value in vars(self).items():
-            if value < 0:
-                raise ValueError(f"{name} must be non-negative, got {value}")
+        if self.usd is None:
+            if not self.note:
+                raise ValueError("An unknown (None) cost needs a note")
+        else:
+            if self.usd < 0:
+                raise ValueError(f"Cost must be non-negative, got {self.usd}")
+            if not self.source_url:
+                raise ValueError(f"A priced cost needs a source_url ({self.usd} USD)")
+
+
+@dataclass(frozen=True)
+class CostBreakdown:
+    """Itemized base cost for one commuting day (round trip), USD.
+
+    total_usd sums the known items; partial is True if any item is unknown.
+    priced=False marks a reference row (drive all the way): items may be
+    shown, but total_usd is None.
+    """
+
+    fare: CostItem  # NJ Transit origin–destination fare
+    parking: CostItem
+    tolls: CostItem
+    fuel: CostItem
+    path_fare: CostItem | None = None  # only when the journey uses PATH
+    priced: bool = True
+    flags: frozenset[str] = frozenset()  # e.g. no_daily_parking, fills_early
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "flags", frozenset(self.flags))
 
     @property
-    def total_usd(self) -> float:
-        return (
-            self.fuel_usd
-            + self.tolls_usd
-            + self.parking_usd
-            + self.fare_usd
-            + self.path_fare_usd
-            + self.congestion_usd
-        )
+    def items(self) -> dict[str, CostItem]:
+        items = {"fare": self.fare, "path_fare": self.path_fare, "parking": self.parking,
+                 "tolls": self.tolls, "fuel": self.fuel}
+        return {k: v for k, v in items.items() if v is not None}
+
+    @property
+    def partial(self) -> bool:
+        return any(item.usd is None for item in self.items.values())
+
+    @property
+    def total_usd(self) -> float | None:
+        if not self.priced:
+            return None
+        return sum(item.usd for item in self.items.values() if item.usd is not None)
+
+    @property
+    def notes(self) -> tuple[str, ...]:
+        return tuple(f"{k}: {v.note}" for k, v in self.items.items() if v.note)
 
 
 def _check_contiguous(legs: tuple[Leg, ...]) -> None:
@@ -158,8 +193,15 @@ class Candidate:
     infeasible: bool = False
     infeasible_reason: str | None = None
     label: str = ""
+    flags: frozenset[str] = frozenset()  # e.g. exposure_varies
+    notes: tuple[str, ...] = ()  # free-text caveats for the UI
 
     def __post_init__(self) -> None:
+        object.__setattr__(self, "flags", frozenset(self.flags))
+        object.__setattr__(self, "notes", tuple(self.notes))
+        self._validate()
+
+    def _validate(self) -> None:
         legs = tuple(self.legs)
         options = tuple(tuple(o) for o in self.catch_next)
         if not legs and not self.infeasible:

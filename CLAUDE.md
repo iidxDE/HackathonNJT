@@ -141,15 +141,21 @@ Do not add new dependencies without a clear reason. Prefer the standard library,
 
 ### 4.6 Pricer
 
-- `base_cost = drive fuel + tolls + parking + NJ Transit O–D fare (+ PATH flat fare if PATH is used)`.
-- Fuel = miles ÷ mpg × gas price (AAA NJ average). mpg is a user setting.
-- Price tables are CSVs under `data/reference/`, each row with `source_url` and `checked_date`. Parking table has `daily_rate`, `permit_only`, `operator`; permit-only lots are excluded.
-- Drive-all-the-way row: drive cost + tunnel toll + Manhattan garage + congestion charge.
+- **Basis: one commuting day (round trip).** Time and lateness terms in the generalized cost use the inbound trip only.
+- `base_cost = fare + PATH fare + parking + tolls + fuel` (`src/pricing/pricer.py`):
+  - fare = 2 × NJT one-way adult fare, board → alight of the planned train (weekly/monthly passes: Phase 3); missing pair → None.
+  - PATH fare = 2 × single ride when PATH is used (cross-honoring for diverted Midtown Direct riders unverified).
+  - parking = cheapest lot at the station with `permit_only` and `resident_only` False, non-resident rate by default; none → None + `no_daily_parking`; no published rate → None + `parking_rate_unknown`; `fills_early` → UI warning.
+  - tolls = 2 × Routes API toll at the planned leave_home (BEST_GUESS slot); no tollInfo → $0, "no toll returned".
+  - fuel = 2 × distance (BEST_GUESS) ÷ 1609.34 ÷ mpg × AAA NJ regular. mpg is a user setting (default 28, an assumption).
+- Every item is a `CostItem` with `source_url` + `checked_date`; an unknown (None) item must carry a note; `partial` = any item unknown.
+- Drive-all-the-way row: `priced=False` (total "not priced"); inbound toll and fuel shown; garage not collected.
 
 ### 4.7 Exposure tagger
 
-- Static map: route segment → infrastructure asset (Portal Bridge, North River tunnels, Penn Station, PATH tunnels).
-- A journey's exposure = the set of assets its legs traverse. Hoboken + PATH is the tunnel-avoiding option.
+- Static map: route segment → infrastructure asset (`HACKENSACK_PORTAL` = Portal / Portal North bridges, `NORTH_RIVER_TUNNELS`, `NY_PENN`, `PATH_TUNNELS`), from `infra.csv` (`src/pricing/exposure.py`).
+- RAIL legs: the infra.csv patterns of the leg's route for (from, to); PATH legs: infra.csv, else the static rule {PATH_TUNNELS}.
+- A journey's exposure = the union over its planned legs; `exposure_varies` if a catch-next option differs. Hoboken + PATH is the North-River-tunnel-avoiding option. SE → NY does **not** cross Portal (Secaucus is east of the bridges); NP → NY does.
 
 ### 4.8 Scorer (Monte Carlo)
 
@@ -189,6 +195,8 @@ Implement as frozen dataclasses (or equivalent typed structures) in one module. 
 - PATH stops: `"PATH:<stop_name>"`, e.g. `PATH:Hoboken`, `PATH:33rd Street`.
 - Non-station endpoints: `ORIGIN` for the trip origin; `LOT:<dest>` for the parking point a drive ends at (`drive_destinations.csv` id, e.g. `LOT:CM`, `LOT:NYG`), followed by a WALK leg to the station (the station buffer).
 - **Cross-system transfers require an explicit WALK leg**, e.g. `HB` → `PATH:Hoboken`, `PATH:33rd Street` → `NY`. `Candidate` rejects legs that do not connect stop to stop.
+
+**CostBreakdown** (pricer): `CostItem`s fare · path_fare (PATH only) · parking · tolls · fuel, each with usd (None = unknown, needs a note), source_url, checked_date, note · `priced` · flags · `total_usd` (sum of known items; None if not priced) · `partial`.
 
 **Candidate** (router or safety net → scorer): a **station policy with a planned train**. Access station · ordered legs (planned itinerary) · itemized costs (fuel, tolls, parking, fare, PATH fare; `None` until priced) · base cost · exposure tags (`None` until tagged) · source (`"router"` or `"safety_net"`) · `catch_next` (onward options from the boarding stop: planned first, then the next `CATCH_NEXT_K` departures, including after the deadline; the scorer takes the catchable one with the earliest scheduled arrival) · `leave_home` · `infeasible` + reason (no train meets the deadline; legs empty only if no eligible train exists) · label.
 

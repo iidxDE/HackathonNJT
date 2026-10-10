@@ -7,6 +7,7 @@ from src import config
 from src.contracts import (
     Candidate,
     CostBreakdown,
+    CostItem,
     DelaySamples,
     FallbackLevel,
     InfraAsset,
@@ -30,9 +31,12 @@ def chatham_candidate() -> Candidate:
     return Candidate(
         access_station="CM",
         legs=(drive, rail),
-        costs=CostBreakdown(fuel_usd=0.61, parking_usd=5.50, fare_usd=13.05),
-        exposure={InfraAsset.PORTAL_BRIDGE, InfraAsset.NORTH_RIVER_TUNNELS,
-                  InfraAsset.PENN_STATION},
+        costs=CostBreakdown(fare=CostItem(13.05, "https://example.test/fare"),
+                            parking=CostItem(5.50, "https://example.test/parking"),
+                            tolls=CostItem(0.0, "https://example.test/tolls"),
+                            fuel=CostItem(0.61, "https://example.test/fuel")),
+        exposure={InfraAsset.HACKENSACK_PORTAL, InfraAsset.NORTH_RIVER_TUNNELS,
+                  InfraAsset.NY_PENN},
         source="safety_net",
     )
 
@@ -43,6 +47,19 @@ def test_hand_built_candidate():
     assert c.base_cost_usd == pytest.approx(19.16)
     assert c.n_transfers == 0
     assert isinstance(c.exposure, frozenset)
+
+
+def test_cost_items_need_notes_and_sources():
+    with pytest.raises(ValueError):
+        CostItem(None)  # unknown without a note
+    with pytest.raises(ValueError):
+        CostItem(8.0)  # priced without a source
+    unknown = CostItem(None, note="no published daily rate")
+    known = CostItem(5.05, "https://example.test")
+    costs = CostBreakdown(fare=known, parking=unknown, tolls=known, fuel=known)
+    assert costs.partial and costs.total_usd == pytest.approx(15.15)
+    assert costs.notes == ("parking: no published daily rate",)
+    assert CostBreakdown(known, known, known, known, priced=False).total_usd is None
 
 
 @pytest.mark.parametrize("raw,expected", [("0400", "400"), ("400", "400"), ("0", "0"), ("6660", "6660")])
@@ -59,7 +76,7 @@ def test_non_contiguous_legs_rejected():
     a = Leg(LegMode.DRIVE, "ORIGIN", "CM", utc(10, 40), utc(10, 50))
     b = Leg(LegMode.WALK, "ST", "NY", utc(11, 0), utc(11, 5))
     with pytest.raises(ValueError):
-        Candidate("CM", (a, b), CostBreakdown(), frozenset(), "router")
+        Candidate("CM", (a, b), None, frozenset(), "router")
 
 
 def test_cross_system_transfer_needs_explicit_walk_leg():
@@ -67,9 +84,9 @@ def test_cross_system_transfer_needs_explicit_walk_leg():
                train_number="0412", gtfs_line="7", direction=0, toward_ny=True)
     path = Leg(LegMode.PATH, "PATH:Hoboken", "PATH:33rd Street", utc(12, 0), utc(12, 15))
     with pytest.raises(ValueError):
-        Candidate("CM", (rail, path), CostBreakdown(), frozenset(), "safety_net")
+        Candidate("CM", (rail, path), None, frozenset(), "safety_net")
     walk = Leg(LegMode.WALK, "HB", "PATH:Hoboken", utc(11, 50), utc(11, 55))
-    c = Candidate("CM", (rail, walk, path), CostBreakdown(), {InfraAsset.PATH_TUNNELS}, "safety_net")
+    c = Candidate("CM", (rail, walk, path), None, {InfraAsset.PATH_TUNNELS}, "safety_net")
     assert c.n_transfers == 1
 
 

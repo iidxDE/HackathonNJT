@@ -220,3 +220,6 @@ Before sleeping: commit, push, confirm the `safety-net` tag runs from a clean ch
 | Demo origin storage | `data/reference/demo_origin.csv` (git-ignored) | Personal location; repo is on GitHub |
 | Safety-net candidates (1.3) | 7 station policies: CM/ST/RT/SE/NP → NY, CM → HB + PATH, drive all the way (not priced). Planned = latest option arriving ≤ deadline; leave_home by fixed point on BEST_GUESS drive; catch-next K = 4 | On Tue 10-13 CM/ST/RT → NY have no trains (Portal Cutover; 0 vs 53 on Fri 10-09): emitted as infeasible, so the UI shows why. CM → HB + PATH is the Chatham rail option |
 | Buffers (1.3) | Margin 5 min; station buffer CM/ST/RT 4, NP 6, SE 8; HB → PATH 5; 33rd St → Penn 4 (was 10); garage → Penn 5 | Estimates, flagged in the UI |
+| Cost basis (1.4) | One commuting day, round trip: 2 × one-way fare (+ 2 × PATH), daily parking, 2 × toll, 2 × fuel | Answer (a). Passes deferred to Phase 3 |
+| Exposure names (1.4) | `HACKENSACK_PORTAL` (was portal_bridge), `NY_PENN` (was penn_station) | Portal North Bridge is in service; the asset is the Hackensack crossing |
+| SE → NY exposure (1.4) | {NORTH_RIVER_TUNNELS, NY_PENN}, no Portal; kept as the data says | Spec expected Portal for #1–5; infra.csv (GTFS shapes × OSM gates) has portal_bridge = 0 on every SE → NY pattern, and Secaucus is east of the bridges. Investigated, not overridden |

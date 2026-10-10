@@ -4,7 +4,7 @@ import pandas as pd
 import pytest
 
 from src import config
-from src.contracts import Candidate, CostBreakdown, Leg, LegMode
+from src.contracts import Candidate, Leg, LegMode
 from src.gtfs import GtfsFeed, gtfs_time_to_seconds, stop_pairs
 from src.safety_net.candidates import (build_candidates, direct_options, hoboken_path_options,
                                        plan_station, solve_leave_home, to_utc)
@@ -123,7 +123,7 @@ def test_catch_next_must_match_planned_suffix():
     other = Leg(LegMode.RAIL, "SE", "NY", t(20), t(32), train_number="2", gtfs_line="10",
                 direction=0, toward_ny=True)
     with pytest.raises(ValueError):
-        Candidate("SE", (rail,), CostBreakdown(), frozenset(), "safety_net", catch_next=((other,),))
+        Candidate("SE", (rail,), None, None, "safety_net", catch_next=((other,),))
 
 
 @pytest.mark.skipif(not (config.GTFS_NJT_RAIL_DIR / "stop_times.txt").exists()

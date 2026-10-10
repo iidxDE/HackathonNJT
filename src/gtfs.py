@@ -24,6 +24,7 @@ class GtfsFeed:
     stop_times: pd.DataFrame  # with arrival_s / departure_s added
     calendar: pd.DataFrame | None  # calendar.txt is optional in GTFS
     calendar_dates: pd.DataFrame | None
+    shapes: pd.DataFrame | None = None  # shapes.txt is optional in GTFS
 
 
 def _read(feed_dir: Path, name: str, required: bool = True) -> pd.DataFrame | None:
@@ -56,6 +57,7 @@ def load_feed(feed_dir: Path) -> GtfsFeed:
         stop_times=stop_times,
         calendar=_read(feed_dir, "calendar.txt", required=False),
         calendar_dates=_read(feed_dir, "calendar_dates.txt", required=False),
+        shapes=_read(feed_dir, "shapes.txt", required=False),
     )
 
 

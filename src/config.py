@@ -34,6 +34,16 @@ TOLLS_MANUAL_CSV = REFERENCE_DIR / "tolls_manual.csv"
 INFRA_CSV = REFERENCE_DIR / "infra.csv"
 STATIONS_SCOPE_CSV = REFERENCE_DIR / "stations_scope.csv"
 TRANSFERS_CSV = REFERENCE_DIR / "transfers.csv"
+OSM_ASSETS_JSON = REFERENCE_DIR / "osm" / "infra_assets.json"  # cached Overpass response
+
+# --- Infrastructure exposure (src/build/infrastructure.py) -------------------
+OVERPASS_URLS: tuple[str, ...] = (
+    "https://overpass-api.de/api/interpreter",
+    "https://overpass.kumi.systems/api/interpreter",
+)
+# Gate = line perpendicular to an OSM asset's main axis through the middle of
+# its length; a leg uses the asset if its GTFS shape crosses the gate.
+OSM_GATE_HALF_WIDTH_M = 250.0
 
 ARTIFACTS_DIR = DATA_DIR / "artifacts"
 DRIVE_CACHE_JSON = ARTIFACTS_DIR / "drive_cache.json"

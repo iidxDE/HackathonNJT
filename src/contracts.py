@@ -49,6 +49,8 @@ class DelayField(str, Enum):
 class AssumptionFlag(str, Enum):
     PATH_UNMEASURED = "path_unmeasured"
     DRIVE_VARIANCE_ASSUMED = "drive_variance_assumed"
+    DRIVE_VARIANCE_DEGENERATE = "drive_variance_degenerate"  # all three traffic models equal
+    DRIVE_SLOT_EXTRAPOLATED = "drive_slot_extrapolated"  # departure outside cached slots
 
 
 CandidateSource = Literal["router", "safety_net"]

@@ -37,6 +37,11 @@ INFRA_CSV = REFERENCE_DIR / "infra.csv"
 STATIONS_SCOPE_CSV = REFERENCE_DIR / "stations_scope.csv"
 TRANSFERS_CSV = REFERENCE_DIR / "transfers.csv"
 OSM_ASSETS_JSON = REFERENCE_DIR / "osm" / "infra_assets.json"  # cached Overpass response
+# Demo origin (lat/lon). Kept under data/reference (git-ignored) because it is a
+# personal location; one row, origin_id/lat/lon.
+DEMO_ORIGIN_CSV = REFERENCE_DIR / "demo_origin.csv"
+# Drive destinations: main daily lot per station + Midtown garage (NYG), from OSM.
+DRIVE_DESTINATIONS_CSV = REFERENCE_DIR / "drive_destinations.csv"
 
 # --- Infrastructure exposure (src/build/infrastructure.py) -------------------
 OVERPASS_URLS: tuple[str, ...] = (
@@ -48,7 +53,8 @@ OVERPASS_URLS: tuple[str, ...] = (
 OSM_GATE_HALF_WIDTH_M = 250.0
 
 ARTIFACTS_DIR = DATA_DIR / "artifacts"
-DRIVE_CACHE_JSON = ARTIFACTS_DIR / "drive_cache.json"
+DRIVE_CACHE_PARQUET = ARTIFACTS_DIR / "drive_cache.parquet"
+ROUTES_RAW_DIR = DATA_DIR / "cache" / "routes_raw"  # one JSON per API call; the real cache
 ALERTS_CACHE_JSON = ARTIFACTS_DIR / "alerts_cache.json"
 
 # --- Time --------------------------------------------------------------------
@@ -56,9 +62,24 @@ LOCAL_TZ = ZoneInfo("America/New_York")
 SECONDS_PER_DAY = 86_400
 
 # --- Demo scenario -----------------------------------------------------------
-DEMO_SERVICE_DATE = date(2026, 10, 12)  # Mon, first day of the new timetable
-DEMO_WINDOW_START_S = 6 * 3600 + 30 * 60  # 06:30 local
-DEMO_WINDOW_END_S = 8 * 3600 + 30 * 60  # 08:30 local
+# Tue 10-13: avoids Columbus Day (Mon 10-12); same Portal Cutover weekday schedule.
+# Used for GTFS service resolution and the drive cache.
+DEMO_SERVICE_DATE = date(2026, 10, 13)
+DEMO_DEADLINE_S = 9 * 3600  # default arrive-by at NY Penn, 09:00 local
+
+# --- Drive cache (Google Routes API, build time only) ------------------------
+ROUTES_API_URL = "https://routes.googleapis.com/directions/v2:computeRoutes"
+ROUTES_API_KEY_ENV = "GOOGLE_MAPS_KEY"
+ROUTES_FIELD_MASK = ("routes.duration,routes.distanceMeters,routes.polyline.encodedPolyline,"
+                     "routes.travelAdvisory.tollInfo")
+ROUTES_TOLL_PASSES: tuple[str, ...] = ("US_NJ_EZPASSNJ",)
+ROUTES_TRAFFIC_MODELS: tuple[str, ...] = ("OPTIMISTIC", "BEST_GUESS", "PESSIMISTIC")
+ROUTES_TIMEOUT_S = 30
+ROUTES_RETRIES = 4  # on 429/5xx, exponential backoff 1, 2, 4 s
+# Departure slots, local time on DEMO_SERVICE_DATE: 05:30–08:45 every 15 min (14 slots).
+DRIVE_SLOT_START_S = 5 * 3600 + 30 * 60
+DRIVE_SLOT_END_S = 8 * 3600 + 45 * 60
+DRIVE_SLOT_STEP_S = 15 * 60
 
 # --- Stations (NJ Transit STATION_2CHAR codes) -------------------------------
 ACCESS_STATIONS: tuple[str, ...] = ("CM", "ST", "RT", "SE", "NP", "HB")
@@ -119,9 +140,8 @@ FEED_DELAY_STOPS: tuple[str, ...] = ("NY",)
 N_SAMPLES = 2_000
 DEFAULT_SEED = 20261012
 
-# Assumption, not observed: sampled drive time = cached duration × lognormal
-# factor with median 1 and this sigma (≈ ±15% typical spread).
-DRIVE_TIME_LOGNORMAL_SIGMA = 0.15
+# Drive time per sample: triangular(OPTIMISTIC, BEST_GUESS, PESSIMISTIC) from
+# the Routes API traffic models (sorted first). No invented spread.
 
 # PATH is not measured: assumed on schedule; a missed connection costs one headway.
 PATH_ASSUMED_HEADWAY_S = 10 * 60

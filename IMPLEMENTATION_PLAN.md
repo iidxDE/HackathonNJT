@@ -215,3 +215,6 @@ Before sleeping: commit, push, confirm the `safety-net` tag runs from a clean ch
 | Pool fallback (1.1) | Min 5 effective runs. L1 line × toward_ny × period (both stops observed) → L2 toward_ny × period (alight observed, board delay 0) → L3 toward_ny → L4 zeros + UI warning | ~1 weekday of data; 8 left most demo cells empty |
 | Pool service days (1.1) | Weekday runs only | Weekend runs are the robustness set (§6); Sat AM-peak runs would dilute Monday's cells |
 | M&E vs Gladstone into HB (1.1) | Not pooled together; separate L1 cells | Both reach L1 at Summit (7 / 6 runs); revisit only if a cell falls back |
+| Demo date (1.2, 10-10 ~15:00) | **Tue 10-13** AM peak, deadline 09:00 at NY Penn; supersedes Mon 10-12 | Avoids Columbus Day; same Portal Cutover weekday schedule |
+| Drive cache (1.2) | 6 destinations (lots from OSM + Midtown garage) × 14 slots × 3 traffic models = 252 Routes calls, raw JSON per call, skip-if-cached | Triangular(OPTIMISTIC, BEST_GUESS, PESSIMISTIC) replaces the lognormal σ = 0.15 assumption: spread comes from Google, not invented |
+| Demo origin storage | `data/reference/demo_origin.csv` (git-ignored) | Personal location; repo is on GitHub |

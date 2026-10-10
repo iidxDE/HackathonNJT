@@ -19,6 +19,7 @@ data/artifacts
 data/reference
 data/reference/gtfs
 data/processed/
+data/cache/
 *.pbf
 *.tif
 *.geotiff

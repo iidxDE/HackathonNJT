@@ -19,8 +19,8 @@ For a given origin, departure time and deadline, it compares options across six 
 | Destination | **NY Penn Station only** |
 | Access stations | Chatham, Summit, Short Hills, Secaucus, Newark Penn, Hoboken (via PATH to 33rd St + walk) |
 | Extra baseline | Drive all the way into Manhattan (tunnel toll, garage, congestion charge) |
-| Demo scenario | Presentation is Sun 2026-10-11 (end of hackathon). The demo **queries** a fixed weekday trip: **Mon 2026-10-12, AM peak** ("tomorrow morning's commute"), not "now". Weekend service is sparse and unrepresentative. Mon 10-12 is also day one of the new timetable. |
-| Routing timetable | The **new** NJ Transit timetable effective Mon 2026-10-12 |
+| Demo scenario | Presentation is Sun 2026-10-11 (end of hackathon). The demo **queries** a fixed weekday trip: **Tue 2026-10-13, AM peak**, default deadline **09:00 at NY Penn** (`config.DEMO_SERVICE_DATE`, `DEMO_DEADLINE_S`). Tue avoids Columbus Day (Mon 10-12) and runs the same Portal Cutover weekday schedule. Used for GTFS service resolution and the drive cache. |
+| Routing timetable | The **new** NJ Transit timetable effective Mon 2026-10-12 (Portal Cutover: M&E / Gladstone / Montclair-Boonton terminate at Hoboken) |
 | Delay data | Own archive of NJ Transit rail vehicle data, Thu 2026-10-08 evening → present |
 
 ### Feature tiers
@@ -122,8 +122,10 @@ Do not add new dependencies without a clear reason. Prefer the standard library,
 
 ### 4.4 Access legs
 
-- Drive time and tolls from the Google Routes API, origin → each access station and origin → Manhattan garage.
-- Called during the build, cached to JSON keyed by (origin, station, departure time). Request time reads the cache; a live call is optional and must fall back to the cache on any error.
+- Drive time and tolls from the Google Routes API (`python -m src.build.drive_cache`): demo origin → the main daily lot of CM, ST, RT, SE, NP and a Midtown garage (`NYG`), from `data/reference/drive_destinations.csv` (OSM coordinates). The Hoboken + PATH candidate reuses CM.
+- Slots: Tue 10-13, 05:30–08:45 local every 15 min (14) × traffic model {OPTIMISTIC, BEST_GUESS, PESSIMISTIC} × 6 destinations = 252 calls; TRAFFIC_AWARE_OPTIMAL, tolls with NJ E-ZPass. One raw JSON per call in `data/cache/routes_raw/<origin>/` (existing files are skipped); parsed to `data/artifacts/drive_cache.parquet`.
+- The demo origin lives in `data/reference/demo_origin.csv` (git-ignored; personal location), not in config.
+- **Request time is lookup only** (`src/scoring/drive.py`): linear interpolation between adjacent slots per model; outside the range, the nearest slot plus a `drive_slot_extrapolated` flag. No live calls.
 
 ### 4.5 Router
 
@@ -152,7 +154,7 @@ Do not add new dependencies without a clear reason. Prefer the standard library,
 ### 4.8 Scorer (Monte Carlo)
 
 For each Candidate, N ≈ 2,000 samples:
-1. Sample drive time (cached duration × a stated variance assumption; there is no observed drive variance).
+1. Sample drive time: triangular(min = OPTIMISTIC, mode = BEST_GUESS, max = PESSIMISTIC) from the Routes API traffic models, sorted first. If all three are equal, zero variance and a `drive_variance_degenerate` flag. No invented spread.
 2. For each rail leg, sample **one whole historical run** from the appropriate pool, so boarding-stop and Penn delays stay correlated. Sample **only runs observed at both the leg's boarding and alighting stops**; that effective count is what `PoolUsage.run_count` reports (and what the fallback threshold applies to).
 3. If the sampled drive misses the planned train, move to the next departure from the same station toward Penn.
 4. For transfers, compare sampled arrival of leg 1 with sampled departure of leg 2; a miss cascades to the next train.

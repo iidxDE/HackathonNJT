@@ -37,7 +37,8 @@ def variant_text(v: ScoredOption) -> str:
 def table(scored: list[ScoredOption]) -> pd.DataFrame:
     """One row per station (chosen train), shared by the CLI and eval/core_claim.md."""
     rows = []
-    for s in sorted(scored, key=lambda s: (s.rank is None or "infeasible" in s.flags, s.rank or 0)):
+    for s in sorted((s for s in scored if s.candidate.legs),
+                    key=lambda s: (s.rank is None or "infeasible" in s.flags, s.rank or 0)):
         c = s.candidate
         planned = c.planned_train
         infeasible = "infeasible" in s.flags
@@ -100,8 +101,9 @@ def main() -> None:
         f"train chosen per station among the last {config.TRAIN_CHOICE_T} on-time trains; sched_rank = money + "
         "time only for the latest on-time train (the timetable plan, no risk). "
         f"VOT ${settings.vot_usd_per_h:g}/h, N = {settings.n}, seed {settings.seed}. Drive-all-the-way is a "
-        "reference row (not priced, not ranked); CM/ST/RT → NY have no train on 10-13 (Midtown Direct "
-        "diverted to Hoboken).\n\n"
+        "reference row (not priced, not ranked).\n\n"
+        "> Midtown Direct to Penn suspended weekdays Oct 11–Nov 14 (Portal cutover): CM / ST / RT have no "
+        "one-seat ride to NY Penn on 10-13; their rail option is Hoboken + PATH.\n\n"
         f"## Demo preset (hard penalty ${settings.hard_penalty_usd:g}, margin {settings.margin_s // 60} min)\n\n"
         + markdown(demo) +
         "\n\n## Sweep: hard penalty × margin (leave_home re-planned per margin)\n\n" + markdown(sw_out) +

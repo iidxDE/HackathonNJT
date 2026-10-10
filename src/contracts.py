@@ -32,7 +32,9 @@ class InfraAsset(str, Enum):
 
 
 class FallbackLevel(str, Enum):
-    """Delay pool granularity, finest first. Direction means toward_ny, not GTFS direction_id."""
+    """Delay pool granularity, finest first. Pools are anchored on the alighting stop: the
+    population is every run of the cell observed at the alight stop (boarding delay =
+    that run's observed delay, else 0). Direction means toward_ny, not GTFS direction_id."""
 
     LINE_TOWARD_NY_PERIOD = "line_toward_ny_period"  # L1: runs observed at the alight stop
     TOWARD_NY_PERIOD = "toward_ny_period"  # L2: as L1, all lines

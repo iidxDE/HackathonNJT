@@ -111,7 +111,9 @@ def _drive_draws(est: DriveEstimate, u: np.ndarray, settings: Settings) -> np.nd
 
 
 def _unscored(c: Candidate, settings: Settings) -> ScoredOption:
-    money = c.costs.total_usd if c.costs else None
+    """No legs: nothing to simulate, and no money shown (a cost for a trip that cannot run
+    would only mislead)."""
+    money = None
     flags = {"infeasible"} | (set(c.costs.flags) if c.costs else set()) | set(c.flags)
     return ScoredOption(c, None, None, None, None, None, {}, money, None, None, None,
                         flags=flags, seed=settings.seed, n_samples=0)

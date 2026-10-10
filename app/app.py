@@ -26,6 +26,7 @@ from src.scoring.scorer import Settings, reprice  # noqa: E402
 
 st.set_page_config(page_title="Crossing", layout="wide")
 
+NOTICE = "Midtown Direct to Penn suspended weekdays Oct 11–Nov 14 (Portal cutover)"
 EXPOSURE_LABELS = {
     InfraAsset.HACKENSACK_PORTAL: "Portal bridges (final cutover in progress)",
     InfraAsset.NORTH_RIVER_TUNNELS: "North River tunnels (1910; lasting bottleneck)",
@@ -204,6 +205,12 @@ if best:
 else:
     st.warning("No option can be ranked for these settings.")
 
+no_train = [s for s in scored if not s.candidate.legs]
+scored = [s for s in scored if s.candidate.legs]  # rows without a train become one notice
+if no_train:
+    st.info(f"{NOTICE}: no one-seat ride to NY Penn from "
+            f"{', '.join(s.candidate.access_station for s in sorted(no_train, key=lambda s: s.candidate_id))}. "
+            "Their rail option is Hoboken + PATH (rows below).")
 table = ranked_table(scored)
 st.dataframe(style(table), hide_index=True, width="stretch")
 st.caption(r"Highlighted: risk changes this option's rank or train. Grey: not an option (reason in Flags). "
@@ -270,7 +277,8 @@ st.dataframe(sw.drop(columns=["p_on_time"]).rename(columns={
     "top_sched_rank": "Top schedule-only (train)", "flips_station": "Station differs",
     "flips_option": "Option differs"}), hide_index=True, width="stretch")
 st.caption("Exposure: the Portal bridges matter only while the final cutover (Oct 11 – Nov 14) runs; "
-           "the North River tunnels stay the fragile asset until the Hudson Tunnel Project (2035).")
+           "the North River tunnels (1910) stay the fragile asset until the Hudson Tunnel Project's new "
+           "tunnels open, planned for the 2030s.")
 st.caption("Caveats: about one weekday of AM-peak data; the M&E → HB population is 7 runs (boarding delay "
            "zero-filled where the boarding stop was not observed); PATH runs to schedule (not measured); "
            "cancelled runs are invisible; the NY delay measure is provisional (check A).")

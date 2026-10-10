@@ -28,8 +28,8 @@ import pandas as pd
 from src import config
 from src.contracts import (AssumptionFlag, Candidate, FallbackLevel, LegMode, PoolUsage,
                            ScoredOption)
-from src.scoring.drive import DriveEstimate, lookup
-from src.scoring.pools import period_of, sample
+from src.scoring.drive import DestDrive, DriveEstimate, index_drive_cache, lookup
+from src.scoring.pools import PoolIndex, index_pools, period_of, sample
 
 
 @dataclass(frozen=True)
@@ -51,12 +51,21 @@ class Settings:
 
 @dataclass(frozen=True)
 class ScoringInputs:
-    """Request-time artifacts: pools.parquet, drive_cache.parquet, PATH timetable."""
+    """Request-time artifacts, indexed once: pools.parquet, drive_cache.parquet, PATH timetable.
 
-    pools: pd.DataFrame
-    drive_cache: pd.DataFrame
+    Raw DataFrames are accepted and indexed on construction.
+    """
+
+    pools: PoolIndex
+    drive_cache: dict[str, DestDrive]
     path_schedule: np.ndarray  # (m, 2) epoch seconds (Hoboken dep, 33rd St arr), sorted by dep
     service_date: date = config.DEMO_SERVICE_DATE
+
+    def __post_init__(self) -> None:
+        if isinstance(self.pools, pd.DataFrame):
+            object.__setattr__(self, "pools", index_pools(self.pools))
+        if isinstance(self.drive_cache, pd.DataFrame):
+            object.__setattr__(self, "drive_cache", index_drive_cache(self.drive_cache))
 
 
 def common_uniforms(settings: Settings) -> np.ndarray:
@@ -89,9 +98,10 @@ def _utc(epoch_s: float) -> datetime:
     return datetime.fromtimestamp(float(epoch_s), tz=timezone.utc)
 
 
-def _train_rng(seed: int, c: Candidate, k: int, train: str) -> np.random.Generator:
-    key = zlib.crc32(f"{c.label}|{k}|{train}".encode())
-    return np.random.default_rng(np.random.SeedSequence([seed, key]))
+def _train_rng(seed: int, train: str) -> np.random.Generator:
+    """Delay draws keyed by (seed, train number): the same train gets the same stream
+    in every candidate and does not shift when the catch-next list changes."""
+    return np.random.default_rng(np.random.SeedSequence([seed, zlib.crc32(train.encode())]))
 
 
 def _drive_draws(est: DriveEstimate, u: np.ndarray, settings: Settings) -> np.ndarray:
@@ -135,9 +145,14 @@ def score_candidate(c: Candidate, inputs: ScoringInputs, settings: Settings,
         option_usage = []
         for k, opt in enumerate(options):
             rail = next(leg for leg in opt if leg.mode is LegMode.RAIL)
+            # Pool periods come from the run's terminal arrival; Phase 1 legs alight at the
+            # terminal, so rail.sched_arr is that time. A router leg ending mid-trip would not be.
+            if not (rail.toward_ny and rail.to_stop in config.TOWARD_NY_TERMINALS):
+                raise NotImplementedError(f"period lookup needs the trip's terminal arrival; "
+                                          f"leg {rail.from_stop}→{rail.to_stop} ends mid-trip")
             draws, usage = sample(inputs.pools, rail.from_stop, rail.to_stop, rail.gtfs_line,
                                   rail.toward_ny, period_of(rail.sched_arr), n,
-                                  _train_rng(settings.seed, c, k, rail.train_number))
+                                  _train_rng(settings.seed, rail.train_number))
             d = draws.delays_s * settings.delay_scale + settings.delay_shift_s
             board, alight = np.maximum(0.0, d[:, 0]), d[:, 1]
             catch[:, k] = ready <= _ts(rail.sched_dep) + board
@@ -170,7 +185,7 @@ def score_candidate(c: Candidate, inputs: ScoringInputs, settings: Settings,
     money = c.costs.total_usd if c.costs else None
     gen = None if money is None else money + time_cost + exp_late
 
-    if c.infeasible:
+    if c.infeasible or "parking_unavailable" in flags:  # no legal parking = not an option
         flags.add("infeasible")
     if c.costs is not None and c.costs.partial:
         flags.add("partial")
@@ -214,14 +229,13 @@ def rank_options(scored: list[ScoredOption]) -> list[ScoredOption]:
     return [replace(s, rank=rank.get(id(s)), sched_rank=sched.get(id(s))) for s in scored]
 
 
-def reprice(scored: list[ScoredOption], settings: Settings,
-            service_date: date = config.DEMO_SERVICE_DATE) -> list[ScoredOption]:
+def reprice(scored: list[ScoredOption], settings: Settings, inputs: ScoringInputs) -> list[ScoredOption]:
     """Re-apply VOT and hard penalty without re-simulating, then re-rank.
 
     Exact: exp_late_cost = VOT × E[L] / 60 + penalty × P(L > 0), and P(L > 0) = 1 − p_on_time.
     Only valid for settings that do not change the simulation (same deadline, margin, seed, N).
     """
-    deadline = local_epoch(service_date, settings.deadline_s)
+    deadline = local_epoch(inputs.service_date, settings.deadline_s)
     out = []
     for s in scored:
         if s.p_on_time is None:

@@ -62,6 +62,11 @@ class DestDrive:
 
 def _index_dest(rows: pd.DataFrame) -> DestDrive:
     wide = rows.pivot_table(index="slot_utc", columns="model", values="duration_s").sort_index()
+    missing = [m for m in (OPTIMISTIC, BEST_GUESS, PESSIMISTIC) if m not in wide]
+    if missing or wide[[OPTIMISTIC, BEST_GUESS, PESSIMISTIC]].isna().any().any():
+        dest = rows["dest"].iloc[0]
+        raise ValueError(f"Drive cache for {dest}: every slot needs all three traffic models "
+                         f"(missing columns {missing} or NaN slots)")
     best = rows[rows["model"] == BEST_GUESS].set_index("slot_utc").reindex(wide.index)
     fetched = best["fetched_at"] if "fetched_at" in best else pd.Series(None, index=best.index)
     return DestDrive(np.array([t.timestamp() for t in wide.index]), wide[OPTIMISTIC].to_numpy(float),

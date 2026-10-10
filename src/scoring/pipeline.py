@@ -67,7 +67,7 @@ def simulate(data: DemoData, settings: Settings) -> list[ScoredOption]:
 
 
 def evaluate(data: DemoData, settings: Settings) -> list[ScoredOption]:
-    return reprice(simulate(data, settings), settings, data.inputs.service_date)
+    return reprice(simulate(data, settings), settings, data.inputs)
 
 
 def top(scored: list[ScoredOption], field: str) -> str | None:
@@ -83,7 +83,7 @@ def sweep(data: DemoData, base: Settings, penalties=(0, 25, 75, 150),
         simulated = simulate(data, replace(base, margin_s=margin * 60))
         for penalty in penalties:
             scored = reprice(simulated, replace(base, margin_s=margin * 60, hard_penalty_usd=penalty),
-                             data.inputs.service_date)
+                             data.inputs)
             rows.append({"hard_penalty_usd": penalty, "margin_min": margin,
                          "top_rank": top(scored, "rank"), "top_sched_rank": top(scored, "sched_rank"),
                          "flips": top(scored, "rank") != top(scored, "sched_rank"),

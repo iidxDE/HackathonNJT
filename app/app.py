@@ -27,15 +27,15 @@ from src.scoring.scorer import Settings, reprice  # noqa: E402
 st.set_page_config(page_title="Crossing", layout="wide")
 
 EXPOSURE_LABELS = {
-    InfraAsset.HACKENSACK_PORTAL: "Portal bridges (Hackensack)",
-    InfraAsset.NORTH_RIVER_TUNNELS: "North River tunnels",
+    InfraAsset.HACKENSACK_PORTAL: "Portal bridges (final cutover in progress)",
+    InfraAsset.NORTH_RIVER_TUNNELS: "North River tunnels (1910; lasting bottleneck)",
     InfraAsset.NY_PENN: "NY Penn",
     InfraAsset.PATH_TUNNELS: "PATH tunnels",
 }
 FLAG_LABELS = {
     "infeasible": "no train meets deadline", "partial": "cost partial", "not_priced": "cost not priced",
     "fills_early": "lot fills early", "no_daily_parking": "no daily parking data",
-    "parking_rate_unknown": "parking rate unknown", "l4_pool": "no delay data",
+    "parking_rate_unknown": "parking rate unknown", "parking_unavailable": "no non-resident parking", "l4_pool": "no delay data",
     "drive_variance_degenerate": "no drive spread", "exposure_varies": "exposure varies by train",
     "censored": "may miss every listed train",
 }
@@ -125,6 +125,7 @@ def cost_rows(s: ScoredOption) -> pd.DataFrame:
 
 def assumptions(c, settings: Settings) -> list[str]:
     out = [f"Safety margin {settings.margin_s // 60} min before the station buffer (setting)",
+           f"On time = arriving at NY Penn by the deadline + {config.ON_TIME_GRACE_S} s grace",
            f"Fuel at {settings.mpg:g} mpg (setting, assumed)",
            "Drive time: triangular over Google OPTIMISTIC / BEST_GUESS / PESSIMISTIC (Routes API, cached)"]
     if c.access_station in config.STATION_BUFFER_S:
@@ -156,13 +157,14 @@ with st.sidebar:
 settings = Settings(deadline_s=deadline.hour * 3600 + deadline.minute * 60, vot_usd_per_h=vot,
                     hard_penalty_usd=penalty, margin_s=int(margin_min) * 60, mpg=mpg)
 data = demo_data()
-scored = reprice(simulate(settings.deadline_s, settings.margin_s, settings.mpg), settings,
-                 data.inputs.service_date)
+scored = reprice(simulate(settings.deadline_s, settings.margin_s, settings.mpg), settings, data.inputs)
 
 # --- Main view ---------------------------------------------------------------
 st.title("Crossing: Chatham-area commute to NY Penn")
 st.info("Reliability is estimated from about one weekday of observed NJ Transit delays (Fri 10-09 AM peak). "
         "Estimates are rough and improve as the archive grows.")
+st.warning("Delay history predates the Portal cutover; Hoboken/PATH crowding and PATH delays are not modeled "
+           "(optimistic for Hoboken options).")
 
 best = next((s for s in scored if s.rank == 1), None)
 if best:
@@ -221,12 +223,14 @@ rows = []
 for m in (0, 5, 10):
     sim = simulate(settings.deadline_s, m * 60, settings.mpg)
     for p in (0, 25, 75, 150):
-        r = reprice(sim, replace(settings, margin_s=m * 60, hard_penalty_usd=p), data.inputs.service_date)
+        r = reprice(sim, replace(settings, margin_s=m * 60, hard_penalty_usd=p), data.inputs)
         top, sched = pipeline.top(r, "rank"), pipeline.top(r, "sched_rank")
         rows.append({"Hard penalty $": p, "Margin min": m, "Top with risk": top,
                      "Top schedule-only": sched, "Flip": "flip" if top != sched else "no flip"})
 st.markdown("**Sweep** (current deadline, VOT and mpg; leave-home re-planned per margin)")
 st.dataframe(pd.DataFrame(rows), hide_index=True, width="stretch")
+st.caption("Exposure: the Portal bridges matter only while the final cutover (Oct 11 – Nov 14) runs; "
+           "the North River tunnels stay the fragile asset until the Hudson Tunnel Project (2035).")
 st.caption("Caveats: about one weekday of AM-peak data; CM → HB has 5 effective runs, so its on-time "
            "count moves in steps of 20; PATH runs to schedule (not measured); cancelled runs are invisible; "
            "the NY delay measure is provisional (check A).")

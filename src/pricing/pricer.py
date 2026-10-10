@@ -2,7 +2,9 @@
 
 Phase 1 rules (one-way peak fares only; passes deferred to Phase 3):
   fare      2 × NJT one-way adult fare (board → alight of the planned train)
-  path_fare 2 × PATH single ride, when the journey uses PATH
+  path_fare 2 × PATH single ride when the journey uses PATH, unless a dated
+            path_fares.csv rule covers the travel date and rail route
+            (Portal cutover cross-honoring: $0)
   parking   cheapest daily lot at the parking station with permit_only and
             resident_only both False (non-resident rate by default)
   tolls     2 × Routes API toll at the planned leave_home (BEST_GUESS slot)
@@ -13,13 +15,16 @@ Every unknown is None with a note; every known value carries its source.
 from __future__ import annotations
 
 from dataclasses import dataclass, replace
+from datetime import date
 from pathlib import Path
 
 import pandas as pd
 
 from src import config
 from src.contracts import Candidate, CostBreakdown, CostItem, LegMode
-from src.scoring.drive import lookup
+from src.scoring.drive import DestDrive, lookup
+
+DriveCache = pd.DataFrame | dict[str, DestDrive]  # raw table or index_drive_cache()
 
 METERS_PER_MILE = 1609.34
 ROUND_TRIP = 2
@@ -53,38 +58,68 @@ def _source(row: pd.Series) -> tuple[str, str | None]:
 
 def fare_item(tables: PriceTables, origin: str, dest: str) -> CostItem:
     rows = tables.fares[(tables.fares["origin_code"] == origin) & (tables.fares["dest_code"] == dest)]
-    direct = rows[rows["via"] == ""]
-    if direct.empty and len(rows) > 1:
-        return CostItem(None, note=f"{origin}→{dest} fare depends on routing ({len(rows)} via rows)")
-    rows = direct if len(direct) else rows
     if rows.empty:
         return CostItem(None, note=f"no {origin}→{dest} fare in njt_fares.csv")
-    row = rows.iloc[0]
+    direct = rows[rows["via"] == ""]
+    via_note = ""
+    if direct.empty:  # only routed variants: the one-seat ride is the cheapest routing
+        row = rows.loc[rows["one_way_adult"].astype(float).idxmin()]
+        via_note = f" (via {row['via']}, cheapest of {len(rows)} routings)"
+    else:
+        row = direct.iloc[0]
     url, checked = _source(row)
-    note = f"2 × one-way {row['one_way_adult']}"
+    note = f"2 × one-way {row['one_way_adult']}{via_note}"
     if not checked:
         note += f"; fare source not dated ({url})"
     return CostItem(ROUND_TRIP * float(row["one_way_adult"]), url, checked, note)
 
 
-def path_fare_item(tables: PriceTables) -> CostItem:
-    row = tables.path_fares[tables.path_fares["fare_type"] == "single_ride"].iloc[0]
+def path_fare_item(tables: PriceTables, travel_date: date | None = None,
+                   rail_route: str | None = None) -> CostItem:
+    """2 × PATH fare; a dated rule (valid_from..valid_to, weekdays, GTFS routes) overrides."""
+    fares = tables.path_fares
+    if travel_date is not None and "valid_from" in fares:
+        ymd = travel_date.isoformat()
+        for _, rule in fares[fares["valid_from"] != ""].iterrows():
+            routes = set(filter(None, rule["gtfs_routes"].split(";")))
+            if (rule["valid_from"] <= ymd <= rule["valid_to"]
+                    and (rule["weekdays_only"].lower() != "true" or travel_date.weekday() < 5)
+                    and (not routes or rail_route in routes)):
+                url, checked = _source(rule)
+                return CostItem(ROUND_TRIP * float(rule["amount"]), url, checked,
+                                f"{rule['fare_type']} {rule['valid_from']}–{rule['valid_to']}: "
+                                f"{rule['notes']}")
+    row = fares[fares["fare_type"] == "single_ride"].iloc[0]
     url, checked = _source(row)
-    return CostItem(ROUND_TRIP * float(row["amount"]), url, checked,
-                    f"2 × single ride {row['amount']}; cross-honoring for Midtown Direct riders "
-                    "diverted to Hoboken may make this $0 (unverified)")
+    return CostItem(ROUND_TRIP * float(row["amount"]), url, checked, f"2 × single ride {row['amount']}")
 
 
-def parking_item(tables: PriceTables, station: str, resident: bool = False) -> tuple[CostItem, set[str]]:
+def parking_item(tables: PriceTables, station: str, resident: bool = False,
+                 park_hhmm: str | None = None) -> tuple[CostItem, set[str]]:
+    """Cheapest usable daily lot. park_hhmm (local "HH:MM") applies non_resident_from limits.
+
+    Flags: no_daily_parking (station not collected), parking_unavailable (lots known,
+    none usable by this rider at this time), parking_rate_unknown (usable, no rate).
+    """
     rate_col = "resident_rate_daily" if resident else "non_resident_rate_daily"
     lots = tables.parking[tables.parking["station_code"] == station]
+    if lots.empty:
+        return CostItem(None, note=f"no parking data for {station} in parking.csv (not collected)"),             {"no_daily_parking"}
+
     def is_true(col: str) -> pd.Series:
         return lots[col].str.strip().str.lower() == "true"
 
-    open_lots = lots[~is_true("permit_only") & ~is_true("resident_only")]
+    usable = ~is_true("permit_only") & ~is_true("resident_only")
+    if not resident and park_hhmm and "non_resident_from" in lots:
+        start = lots["non_resident_from"]
+        usable &= (start == "") | (start <= park_hhmm)
+    open_lots = lots[usable]
     if open_lots.empty:
-        return CostItem(None, note=f"no daily (non-permit) lot for {station} in parking.csv "
-                                   "(not collected)"), {"no_daily_parking"}
+        why = "; ".join(f"{r.lot_name}: " + ("permit/residents only" if _flag(r.permit_only) or _flag(r.resident_only)
+                                             else f"non-residents from {r.non_resident_from}")
+                        for r in lots.itertuples())
+        return CostItem(None, note=f"no {'resident' if resident else 'non-resident'} daily parking at {station}"
+                                   f"{f' when parking at {park_hhmm}' if park_hhmm else ''} ({why})"),             {"parking_unavailable"}
     rated = open_lots[open_lots[rate_col] != ""]
     if rated.empty:
         ops = ", ".join(sorted(set(open_lots["operator"])))
@@ -102,11 +137,15 @@ def parking_item(tables: PriceTables, station: str, resident: bool = False) -> t
     return CostItem(float(row[rate_col]), url, checked, note), flags
 
 
+def _local_date(leg) -> date | None:
+    return None if leg is None else pd.Timestamp(leg.sched_dep).tz_convert(config.LOCAL_TZ).date()
+
+
 def _gas(tables: PriceTables) -> pd.Series:
     return tables.driving_costs[tables.driving_costs["item"] == "nj_gas_regular"].iloc[0]
 
 
-def drive_items(tables: PriceTables, drive_cache: pd.DataFrame, c: Candidate, mpg: float,
+def drive_items(tables: PriceTables, drive_cache: DriveCache, c: Candidate, mpg: float,
                 inbound_toll_only: bool = False) -> tuple[CostItem, CostItem]:
     """(tolls, fuel) from the access drive at leave_home."""
     drive = c.legs[0] if c.legs and c.legs[0].mode is LegMode.DRIVE else None
@@ -130,7 +169,7 @@ def drive_items(tables: PriceTables, drive_cache: pd.DataFrame, c: Candidate, mp
     return tolls, fuel
 
 
-def price_candidate(c: Candidate, tables: PriceTables, drive_cache: pd.DataFrame,
+def price_candidate(c: Candidate, tables: PriceTables, drive_cache: DriveCache,
                     mpg: float = config.DEFAULT_MPG, resident: bool = False) -> Candidate:
     """Return the Candidate with costs filled in."""
     if c.access_station == "DRIVE":
@@ -145,8 +184,11 @@ def price_candidate(c: Candidate, tables: PriceTables, drive_cache: pd.DataFrame
     rail = c.planned_train
     origin, dest = (rail.from_stop, rail.to_stop) if rail else (c.access_station, config.DESTINATION_STATION)
     uses_path = any(leg.mode is LegMode.PATH for leg in c.legs)
-    parking, flags = parking_item(tables, c.access_station, resident)
+    park_hhmm = (pd.Timestamp(c.legs[0].sched_arr).tz_convert(config.LOCAL_TZ).strftime("%H:%M")
+                 if c.legs and c.legs[0].mode is LegMode.DRIVE else None)
+    parking, flags = parking_item(tables, c.access_station, resident, park_hhmm)
     tolls, fuel = drive_items(tables, drive_cache, c, mpg)
     costs = CostBreakdown(fare=fare_item(tables, origin, dest), parking=parking, tolls=tolls, fuel=fuel,
-                          path_fare=path_fare_item(tables) if uses_path else None, flags=flags)
+                          path_fare=path_fare_item(tables, _local_date(rail), rail.gtfs_line if rail else None)
+                          if uses_path else None, flags=flags)
     return replace(c, costs=costs)

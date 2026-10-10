@@ -95,7 +95,7 @@ def test_hoboken_path_adds_path_fare():
             Leg(LegMode.WALK, "PATH:33rd Street", "NY", t("08:56"), t("09:00")))
     c = Candidate("CM", legs, None, None, "safety_net", leave_home=t("07:00"))
     k = price_candidate(c, tables(), drive_cache("CM", 300.0, 0.0)).costs
-    assert k.fare.usd == pytest.approx(26.10) and k.path_fare.usd == pytest.approx(6.50)
+    assert k.fare.usd == pytest.approx(26.10) and k.path_fare.usd == pytest.approx(6.50)  # no dated rule
     assert k.tolls.usd == 0 and k.tolls.note == "no toll returned"
     assert not k.partial
 
@@ -158,3 +158,36 @@ def test_golden_demo_exposure():
     assert got["CM → HB + PATH"] == {InfraAsset.PATH_TUNNELS}
     assert got["Drive all the way (not priced)"] == frozenset()
     assert got["CM → NY"] == frozenset()  # no train on 10-13
+
+
+def test_cutover_cross_honor_makes_path_free_only_in_window():
+    from datetime import date as d
+
+    from src.pricing.pricer import path_fare_item
+
+    t = tables()
+    rule = {"fare_type": "portal_cutover_cross_honor", "amount": "0.00", "source_url": URL,
+            "checked_date": "2026-10-10", "notes": "test", "valid_from": "2026-10-11",
+            "valid_to": "2026-11-14", "weekdays_only": "True", "gtfs_routes": "7;8"}
+    fares = pd.concat([t.path_fares.assign(valid_from="", valid_to="", weekdays_only="", gtfs_routes=""),
+                       pd.DataFrame([rule])], ignore_index=True)
+    t = PriceTables(t.fares, fares, t.parking, t.driving_costs, t.drive_dests)
+    assert path_fare_item(t, d(2026, 10, 13), "7").usd == 0.0  # Tue, M&E, in window
+    assert path_fare_item(t, d(2026, 10, 13), "8").source_url == URL  # Gladstone too
+    assert path_fare_item(t, d(2026, 10, 17), "7").usd == pytest.approx(6.50)  # Saturday
+    assert path_fare_item(t, d(2026, 11, 16), "7").usd == pytest.approx(6.50)  # after window
+    assert path_fare_item(t, d(2026, 10, 13), "10").usd == pytest.approx(6.50)  # not Midtown Direct
+
+
+def test_non_resident_morning_ban_makes_parking_unavailable():
+    t = tables()
+    lot4 = {**t.parking.iloc[0].to_dict(), "station_code": "RT", "lot_name": "Lot 4", "fills_early": "",
+            "resident_rate_daily": "5.00", "non_resident_rate_daily": "5.00", "non_resident_from": "12:00"}
+    parking = pd.concat([t.parking.assign(non_resident_from=""), pd.DataFrame([lot4])], ignore_index=True)
+    t = PriceTables(t.fares, t.path_fares, parking,
+                    t.driving_costs, t.drive_dests)
+    item, flags = parking_item(t, "RT", park_hhmm="07:50")
+    assert item.usd is None and flags == {"parking_unavailable"} and "12:00" in item.note
+    assert parking_item(t, "RT", park_hhmm="12:30")[0].usd == 5.0
+    assert parking_item(t, "RT", resident=True, park_hhmm="07:50")[0].usd == 5.0
+    assert parking_item(t, "XX")[1] == {"no_daily_parking"}  # not collected ≠ unavailable

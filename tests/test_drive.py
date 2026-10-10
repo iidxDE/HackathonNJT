@@ -92,3 +92,10 @@ def test_sampling_deterministic_with_seed():
     a = sample_drive_s(est, 100, np.random.default_rng(3))
     b = sample_drive_s(est, 100, np.random.default_rng(3))
     assert np.array_equal(a, b)
+
+
+def test_slot_missing_a_traffic_model_is_rejected():
+    c = cache({"OPTIMISTIC": [1000, 1200], "BEST_GUESS": [1200, 1600], "PESSIMISTIC": [1500, 2100]})
+    c = c[~((c["model"] == "PESSIMISTIC") & (c["slot_utc"] == c["slot_utc"].max()))]
+    with pytest.raises(ValueError):
+        lookup(c, "SE", local("07:00"))

@@ -55,13 +55,15 @@ def load_pools(path: Path = config.POOLS_PARQUET) -> pd.DataFrame:
 class ResolvedPool:
     """Effective runs for one (board, alight) leg at the chosen level.
 
-    delays_s has one row per distinct run, columns (board, alight), no NaN.
+    delays_s has one row per distinct run, columns (board, alight), no NaN;
+    run_ids[i] ("service_date|train|trip_id") names row i.
     """
 
     level: FallbackLevel
     key: PoolKey
     delays_s: np.ndarray
     fields: dict[str, DelayField]
+    run_ids: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
         self.delays_s.setflags(write=False)  # shared via PoolIndex.memo
@@ -123,7 +125,11 @@ def resolve(pools: pd.DataFrame | PoolIndex, board_stop: str, alight_stop: str, 
     return _resolve(pools, board_stop, alight_stop, line, toward_ny, period, min_runs)
 
 
-def _resolve(pools, board_stop: str, alight_stop: str, line: str, toward_ny: bool, period: str,
+def _ids(index: pd.Index) -> tuple[str, ...]:
+    return tuple("|".join(str(v) for v in t) for t in index)
+
+
+def _resolve(pools: pd.DataFrame | PoolIndex, board_stop: str, alight_stop: str, line: str, toward_ny: bool, period: str,
              min_runs: int) -> ResolvedPool:
     if board_stop == alight_stop:
         raise ValueError(f"Board and alight stops are both {board_stop}")
@@ -132,7 +138,8 @@ def _resolve(pools, board_stop: str, alight_stop: str, line: str, toward_ny: boo
     both = _runs_by_stop(rows, [board_stop, alight_stop]).dropna()
     if len(both) >= min_runs:
         return ResolvedPool(FallbackLevel.LINE_TOWARD_NY_PERIOD, l1, both.to_numpy(float),
-                            {board_stop: _field(rows, board_stop), alight_stop: _field(rows, alight_stop)})
+                            {board_stop: _field(rows, board_stop), alight_stop: _field(rows, alight_stop)},
+                            _ids(both.index))
 
     for level, key in ((FallbackLevel.TOWARD_NY_PERIOD, PoolKey(None, toward_ny, period)),
                        (FallbackLevel.TOWARD_NY, PoolKey(None, toward_ny, None))):
@@ -141,19 +148,26 @@ def _resolve(pools, board_stop: str, alight_stop: str, line: str, toward_ny: boo
         if len(alight) >= min_runs:
             delays = np.column_stack([np.zeros(len(alight)), alight.to_numpy(float)])
             return ResolvedPool(level, key, delays,
-                                {board_stop: DelayField.ASSUMED_ZERO, alight_stop: _field(rows, alight_stop)})
+                                {board_stop: DelayField.ASSUMED_ZERO, alight_stop: _field(rows, alight_stop)},
+                                _ids(alight.index))
 
     return ResolvedPool(FallbackLevel.NO_DATA, PoolKey(None, None, None), np.zeros((0, 2)),
                         {board_stop: DelayField.ASSUMED_ZERO, alight_stop: DelayField.ASSUMED_ZERO})
 
 
-def sample(pools: pd.DataFrame, board_stop: str, alight_stop: str, line: str, toward_ny: bool,
-           period: str, n: int, rng: np.random.Generator,
+def sample(pools: pd.DataFrame | PoolIndex, board_stop: str, alight_stop: str, line: str,
+           toward_ny: bool, period: str, n: int, rng: np.random.Generator,
            min_runs: int = config.POOL_MIN_RUNS) -> tuple[DelaySamples, PoolUsage]:
-    """n whole-run draws of (board, alight) delay in seconds, with the pool used."""
+    """n whole-run draws of (board, alight) delay in seconds, with the pool used.
+
+    Each draw picks a run id uniformly with replacement and reads that run's
+    board and alight delays together.
+    """
     pool = resolve(pools, board_stop, alight_stop, line, toward_ny, period, min_runs)
     if pool.run_count:
-        draws = pool.delays_s[rng.integers(0, pool.run_count, size=n)]
+        drawn = rng.choice(np.asarray(pool.run_ids), size=n)
+        row_of = {rid: i for i, rid in enumerate(pool.run_ids)}
+        draws = pool.delays_s[[row_of[rid] for rid in drawn]]
     else:
         draws = np.zeros((n, 2))
     stops = (board_stop, alight_stop)

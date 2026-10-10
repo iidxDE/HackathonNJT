@@ -143,8 +143,8 @@ Do not add new dependencies without a clear reason. Prefer the standard library,
 
 - **Basis: one commuting day (round trip).** Time and lateness terms in the generalized cost use the inbound trip only.
 - `base_cost = fare + PATH fare + parking + tolls + fuel` (`src/pricing/pricer.py`):
-  - fare = 2 × NJT one-way adult fare, board → alight of the planned train (weekly/monthly passes: Phase 3); missing pair → None.
-  - PATH fare = 2 × single ride when PATH is used (cross-honoring for diverted Midtown Direct riders unverified).
+  - fare = 2 × NJT one-way adult fare, board → alight of the planned train (weekly/monthly passes: Phase 3); only routed (`via`) rows → the cheapest, noted; missing pair → None.
+  - PATH fare = 2 × single ride when PATH is used, unless a dated `path_fares.csv` rule applies: Portal cutover cross-honoring makes PATH $0 for M&E / Gladstone riders on weekdays 2026-10-11 – 11-14 (NJT release 2026-09-17).
   - parking = cheapest lot at the station with `permit_only` and `resident_only` False, non-resident rate by default; none → None + `no_daily_parking`; no published rate → None + `parking_rate_unknown`; `fills_early` → UI warning.
   - tolls = 2 × Routes API toll at the planned leave_home (BEST_GUESS slot); no tollInfo → $0, "no toll returned".
   - fuel = 2 × distance (BEST_GUESS) ÷ 1609.34 ÷ mpg × AAA NJ regular. mpg is a user setting (default 28, an assumption).
@@ -155,7 +155,7 @@ Do not add new dependencies without a clear reason. Prefer the standard library,
 
 - Static map: route segment → infrastructure asset (`HACKENSACK_PORTAL` = Portal / Portal North bridges, `NORTH_RIVER_TUNNELS`, `NY_PENN`, `PATH_TUNNELS`), from `infra.csv` (`src/pricing/exposure.py`).
 - RAIL legs: the infra.csv patterns of the leg's route for (from, to); PATH legs: infra.csv, else the static rule {PATH_TUNNELS}.
-- A journey's exposure = the union over its planned legs; `exposure_varies` if a catch-next option differs. Hoboken + PATH is the North-River-tunnel-avoiding option. SE → NY does **not** cross Portal (Secaucus is east of the bridges); NP → NY does.
+- A journey's exposure = the union over its planned legs; `exposure_varies` if a catch-next option differs. Hoboken + PATH is the North-River-tunnel-avoiding option. SE → NY does **not** cross Portal (Secaucus is east of the bridges); NP → NY does. Framing: Portal exposure is time-scoped (final cutover in progress); the North River tunnels are the lasting fragile asset.
 
 ### 4.8 Scorer (Monte Carlo)
 

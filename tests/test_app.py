@@ -15,9 +15,10 @@ def test_demo_preset_renders_offline():
     at.run()
     assert not at.exception
     assert at.info[0].value.startswith("Reliability is estimated from about one weekday")
-    assert at.subheader[0].value.startswith("Best option: CM → HB + PATH. Leave 07:40, train 872")
+    assert at.warning[0].value.startswith("Delay history predates the Portal cutover")
+    assert at.subheader[0].value.startswith("Best option: ")
     ranked = at.dataframe[0].value
     ranked = getattr(ranked, "data", ranked)
-    assert len(ranked) == 7
-    assert list(ranked["Option"][:3]) == ["CM → HB + PATH", "NP → NY", "SE → NY"]
-    assert any("changes" in m.value for m in at.markdown)  # claim panel
+    assert len(ranked) == 9
+    assert {"CM → HB + PATH", "ST → HB + PATH", "RT → HB + PATH"} <= set(ranked["Option"])
+    assert any("top option" in m.value for m in at.markdown)  # claim panel

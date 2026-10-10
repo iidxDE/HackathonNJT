@@ -29,7 +29,7 @@ log = logging.getLogger(__name__)
 
 EVIDENCE_MD = config.REPO_ROOT / "eval" / "pool_evidence.md"
 
-# Demo rail legs on Mon 10-12 (Portal Cutover: M&E/Gladstone end at HB),
+# Demo rail legs on Tue 10-13 (config.DEMO_SERVICE_DATE; Portal cutover: M&E/Gladstone end at HB),
 # plus pre-cutover CM/ST → NY for comparison. (board, alight, line, label)
 DEMO_LEGS: tuple[tuple[str, str, str, str], ...] = (
     ("CM", "HB", "7", "M&E"),

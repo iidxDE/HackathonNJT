@@ -31,7 +31,11 @@ NY = config.DESTINATION_STATION
 HB = "HB"
 PATH_HB = f"PATH:{config.PATH_HOBOKEN_STOP}"
 PATH_33 = f"PATH:{config.PATH_33RD_STOP}"
-MORRIS_ESSEX_ROUTE = "7"
+# Midtown Direct: Morris & Essex (7) and Gladstone (8). Diverted to Hoboken on
+# weekdays during the Portal cutover (2026-10-11 – 11-14).
+MIDTOWN_DIRECT_ROUTES: tuple[str, ...] = ("7", "8")
+HB_PATH_STATIONS: tuple[str, ...] = ("CM", "ST", "RT")
+CUTOVER_REASON = "Midtown Direct diverted to Hoboken (Portal cutover)"
 
 # dest id, depart time (UTC) -> BEST_GUESS drive seconds
 DriveTime = Callable[[str, datetime], float]
@@ -63,9 +67,9 @@ def direct_options(njt: GtfsFeed, service_date: date, station: str) -> list[Opti
 
 def hoboken_path_options(njt: GtfsFeed, path: GtfsFeed, service_date: date,
                          station: str = "CM") -> list[Option]:
-    """M&E station -> HB, walk, first PATH Hoboken -> 33rd St that fits, walk to Penn."""
+    """Midtown Direct station -> HB, walk, first PATH Hoboken -> 33rd St that fits, walk to Penn."""
     rail = stop_pairs(njt, service_date, station, HB)
-    rail = rail[(rail["route_id"] == MORRIS_ESSEX_ROUTE) & (rail["arr_s"] < config.SECONDS_PER_DAY)]
+    rail = rail[rail["route_id"].isin(MIDTOWN_DIRECT_ROUTES) & (rail["arr_s"] < config.SECONDS_PER_DAY)]
     pth = stop_pairs(path, service_date, config.PATH_HOBOKEN_STOP, config.PATH_33RD_STOP,
                      key_col="stop_name").sort_values("dep_s")
     xfer = config.TRANSFER_MIN_S["hoboken_njt_to_path"]
@@ -130,15 +134,21 @@ def _hhmm(t: datetime) -> str:
 
 def plan_station(options: list[Option], station: str, drive_dest: str, deadline: datetime,
                  drive_s: DriveTime, label: str, service_date: date,
-                 margin_s: int = config.SAFETY_MARGIN_S) -> Candidate:
-    """Pick the planned option and catch-next list; build the access legs."""
+                 margin_s: int = config.SAFETY_MARGIN_S, no_train_reason: str | None = None) -> Candidate:
+    """Pick the planned option and catch-next list; build the access legs.
+
+    Planned = the on-time option that departs latest (tie: earliest arrival). If none
+    is on time, the earliest-arriving option, and the candidate is infeasible.
+    """
     if not options:
         return Candidate(station, (), None, None, "safety_net", label=label, infeasible=True,
-                         infeasible_reason=f"no eligible train from {station} on {service_date}")
-    options = sorted(options, key=lambda o: (o[-1].sched_arr, o[0].sched_dep))
-    on_time = [i for i, o in enumerate(options) if o[-1].sched_arr <= deadline]
+                         infeasible_reason=no_train_reason or f"no eligible train from {station} on {service_date}")
+    on_time = [o for o in options if o[-1].sched_arr <= deadline]
     infeasible = not on_time
-    planned = options[on_time[-1]] if on_time else options[0]
+    if on_time:
+        planned = max(on_time, key=lambda o: (o[0].sched_dep, -o[-1].sched_arr.timestamp()))
+    else:
+        planned = min(options, key=lambda o: (o[-1].sched_arr, o[0].sched_dep))
     later = sorted((o for o in options if o is not planned and o[0].sched_dep >= planned[0].sched_dep),
                    key=lambda o: (o[0].sched_dep, o[-1].sched_arr))
     catch_next = (planned, *later[:config.CATCH_NEXT_K])
@@ -164,14 +174,16 @@ def drive_all_the_way(deadline: datetime, drive_s: DriveTime,
                      label="Drive all the way (not priced)")
 
 
-HB_PATH_LABEL = "CM → HB + PATH"
+def hb_path_label(station: str) -> str:
+    return f"{station} → HB + PATH"
 
 
 def station_options(njt: GtfsFeed, path: GtfsFeed,
                     service_date: date = config.DEMO_SERVICE_DATE) -> dict[str, list[Option]]:
     """Every onward option per candidate label for a service date (deadline-independent)."""
     opts = {f"{s} → NY": direct_options(njt, service_date, s) for s in DIRECT_STATIONS}
-    opts[HB_PATH_LABEL] = hoboken_path_options(njt, path, service_date, "CM")
+    for s in HB_PATH_STATIONS:
+        opts[hb_path_label(s)] = hoboken_path_options(njt, path, service_date, s)
     return opts
 
 
@@ -180,15 +192,18 @@ def build_candidates(njt: GtfsFeed | None, path: GtfsFeed | None, drive_s: Drive
                      deadline_s: int = config.DEMO_DEADLINE_S,
                      margin_s: int = config.SAFETY_MARGIN_S,
                      options: dict[str, list[Option]] | None = None) -> list[Candidate]:
-    """The 7 safety-net candidates for an arrive-by deadline at NY Penn (local seconds).
+    """Safety-net candidates for an arrive-by deadline at NY Penn (local seconds):
+    CM/ST/RT/SE/NP → NY, CM/ST/RT → HB + PATH, and drive all the way.
 
     Pass precomputed station_options() to skip the GTFS scan (njt / path unused then).
     """
     deadline = to_utc(service_date, deadline_s)
     opts = options if options is not None else station_options(njt, path, service_date)
-    cands = [plan_station(opts[f"{s} → NY"], s, s, deadline, drive_s, f"{s} → NY", service_date, margin_s)
+    cands = [plan_station(opts[f"{s} → NY"], s, s, deadline, drive_s, f"{s} → NY", service_date, margin_s,
+                          no_train_reason=CUTOVER_REASON if s in HB_PATH_STATIONS else None)
              for s in DIRECT_STATIONS]
-    cands.append(plan_station(opts[HB_PATH_LABEL], "CM", "CM", deadline, drive_s, HB_PATH_LABEL,
-                              service_date, margin_s))
+    cands += [plan_station(opts[hb_path_label(s)], s, s, deadline, drive_s, hb_path_label(s),
+                           service_date, margin_s)
+              for s in HB_PATH_STATIONS]
     cands.append(drive_all_the_way(deadline, drive_s, margin_s))
     return cands

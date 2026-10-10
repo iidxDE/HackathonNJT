@@ -69,6 +69,17 @@ def test_planned_is_latest_on_time_and_catch_next_runs_past_deadline():
     assert c.legs[0].to_stop == "LOT:SE" and c.legs[2].toward_ny
 
 
+def test_planned_is_latest_departure_among_on_time():
+    # A slow train that leaves later but still arrives by the deadline beats an earlier express.
+    t = lambda hhmm: to_utc(TUE, int(hhmm[:2]) * 3600 + int(hhmm[3:]) * 60)  # noqa: E731
+    def opt(train, dep, arr):
+        return (Leg(LegMode.RAIL, "SE", "NY", t(dep), t(arr), train_number=train, gtfs_line="10",
+                    direction=0, toward_ny=True),)
+    express, local = opt("1", "08:30", "08:42"), opt("2", "08:35", "08:58")
+    c = plan_station([express, local], "SE", "SE", t("09:00"), flat_drive(30), "SE", TUE)
+    assert c.planned_train.train_number == "2"
+
+
 def test_earlier_deadline_moves_planned_train():
     c = plan_station(direct_options(NJT, TUE, "SE"), "SE", "SE", to_utc(TUE, 8 * 3600),
                      flat_drive(30), "SE", TUE)
@@ -136,10 +147,12 @@ def test_golden_demo_candidates(deadline_s, se_train, hb_train):
 
     cands = build_candidates(load_feed(config.GTFS_NJT_RAIL_DIR), load_feed(config.GTFS_PATH_DIR),
                              flat_drive(20), TUE, deadline_s)
-    assert len(cands) == 7
+    assert len(cands) == 9
     by_label = {c.label: c for c in cands}
-    for s in ("CM", "ST", "RT"):  # Portal Cutover: no one-seat ride to NY
+    for s in ("CM", "ST", "RT"):  # Portal cutover: no one-seat ride to NY, but HB + PATH
         assert by_label[f"{s} → NY"].infeasible
+        assert by_label[f"{s} → NY"].infeasible_reason == "Midtown Direct diverted to Hoboken (Portal cutover)"
+        assert not by_label[f"{s} → HB + PATH"].infeasible
     assert by_label["SE → NY"].planned_train.train_number == se_train
     assert by_label["CM → HB + PATH"].planned_train.train_number == hb_train
     assert by_label["Drive all the way (not priced)"].sched_arr == to_utc(TUE, deadline_s)

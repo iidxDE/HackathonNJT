@@ -110,13 +110,8 @@ Do not add new dependencies without a clear reason. Prefer the standard library,
   - Periods (`config.PERIODS`): early (<06:00), AM peak (06:00–10:00), midday (10:00–16:00), PM peak (16:00–19:30), evening (≥19:30). A run's period comes from its **scheduled arrival at its GTFS terminal**, NY local time; the same rule applies to the candidate's train at lookup.
   - Weekday runs only (`config.POOL_WEEKDAYS_ONLY`); weekend runs are the robustness set (§6).
   - Do not pool by train number: the 10-12 timetable change moves start times by up to ±40 min.
-- **Fallback hierarchy**, first level with ≥ `config.POOL_MIN_RUNS` (5) effective runs:
-  - L1 line × toward_ny × period: runs observed at **both** the leg's stops; (board, alight) drawn together.
-  - L1b line × toward_ny × period: runs observed at the alight stop; board delay = 0. Line identity matters more than boarding-stop coverage, so the line is kept and the boarding-stop requirement is dropped first (RT: most AM-peak M&E runs run express past Short Hills).
-  - L2 toward_ny × period (all lines): as L1b.
-  - L3 toward_ny (all periods): as L2.
-  - L4 no data: zero delays (schedule baseline), run_count 0, UI warning.
-  Record level, key, run count and delay field per stop in `PoolUsage`; the UI shows it as a confidence indicator.
+- **Pools are anchored on the alighting stop** (Phase 1.8). Population for a rail leg = runs of the leg's line × toward_ny × period **observed at the alight stop**. Boarding delay = that run's observed boarding delay, 0 if not observed (`PoolUsage.board_zero_share`). The same train therefore draws the same runs from any boarding station.
+- **Fallback**, first level with ≥ `config.POOL_MIN_RUNS` (5) runs: L1 line × toward_ny × period → L2 toward_ny × period (all lines) → L3 toward_ny → L4 no data (zeros, run_count 0, UI warning). Record level, key, run count, zero-fill share and delay field per stop in `PoolUsage`.
 - **Store whole runs, not independent stop delays.** Each sample is one historical run with its delay at every stop. Sample size = number of runs, never number of stop observations.
 - **Delay measure (`delay_used_s`, PROVISIONAL after check A, 10-10):** `delay_s` (SEC_LATE, feed-relative) at **NY** (`config.FEED_DELAY_STOPS`), `delay_vs_gtfs_s` (feed schedule + SEC_LATE − GTFS time) at every other stop, HB included. Switch with `config.TERMINAL_DELAY_SOURCE` (`feed` / `gtfs`). Reason: 26 of 206 NY-terminating runs carry a feed schedule exactly 780 s later than GTFS at NY only; on those runs `delay_vs_gtfs_s` jumps +766 s (median) from the previous stop while SEC_LATE moves +2 s, so the gap is most likely a schedule artifact. HB shows no offset. Neither field observes the actual NY arrival, so a real padded schedule is not fully ruled out.
 - **One delay per stop = the approach delay:** the last record seen while that stop was `NEXT_STOP`. It also stands in for the departure delay at that stop (stated limitation; dwell is not modeled).
@@ -145,7 +140,7 @@ Do not add new dependencies without a clear reason. Prefer the standard library,
 - **Basis: one commuting day (round trip).** Time and lateness terms in the generalized cost use the inbound trip only.
 - `base_cost = fare + PATH fare + parking + tolls + fuel` (`src/pricing/pricer.py`):
   - fare = 2 × NJT one-way adult fare, board → alight of the planned train (weekly/monthly passes: Phase 3); only routed (`via`) rows → the cheapest, noted; missing pair → None.
-  - PATH fare = 2 × single ride when PATH is used, unless a dated `path_fares.csv` rule applies: Portal cutover cross-honoring makes PATH $0 for M&E / Gladstone riders on weekdays 2026-10-11 – 11-14 (NJT release 2026-09-17).
+  - PATH fare = 2 × single ride when PATH is used, unless a dated `path_fares.csv` rule applies (`valid_from`, `valid_to`, `weekdays_only`, `lines`): Portal cutover cross-honoring makes PATH $0, "cross-honored, Hoboken–33rd St only", when the rail leg ends at HB on M&E 7 / Gladstone 8 / Montclair-Boonton 2–3, weekdays 2026-10-11 – 11-14 (NJT release 2026-09-17).
   - parking = cheapest lot at the station with `permit_only` and `resident_only` False, non-resident rate by default; none → None + `no_daily_parking`; no published rate → None + `parking_rate_unknown`; `fills_early` → UI warning.
   - tolls = 2 × Routes API toll at the planned leave_home (BEST_GUESS slot); no tollInfo → $0, "no toll returned".
   - fuel = 2 × distance (BEST_GUESS) ÷ 1609.34 ÷ mpg × AAA NJ regular. mpg is a user setting (default 28, an assumption).
@@ -162,13 +157,15 @@ Do not add new dependencies without a clear reason. Prefer the standard library,
 
 `src/scoring/scorer.py`; N = 2,000 draws per candidate, vectorized, explicit seed (default 42).
 1. **Drive:** u_i ~ U(0,1) **shared across candidates** (common random numbers); drive_i = triangular inverse CDF at u_i over (OPTIMISTIC, BEST_GUESS, PESSIMISTIC), sorted, interpolated at leave_home. No invented spread; all equal → `drive_variance_degenerate`. ready_i = leave_home + drive_i + station buffer.
-2. **Rail:** each catch-next train draws (board, alight) delay from **one whole historical run** (`pools.sample`; L1 needs runs observed at both stops, and that effective count is `PoolUsage.run_count`). board = max(0, board). Trains are drawn independently of each other.
+2. **Rail:** each catch-next train draws (board, alight) delay from **one whole historical run** (`pools.sample`, alight-anchored population). Draws are keyed by (seed, train number), so a train draws identical runs in every candidate and variant. board = max(0, board).
 3. **Catching:** train k is catchable if ready_i ≤ sched_dep_k + board_k. The rider takes the catchable train with the **earliest scheduled arrival**; arrival = sched_arr + alight. Nothing catchable → arrival = deadline + `LATE_CAP_MIN` (censored, reported as `censored_share`).
 4. **Hoboken + PATH:** HB actual arrival + transfer walk → next scheduled PATH departure → 33rd St + egress walk. PATH runs to schedule: **assumed, not measured** (UI label).
 5. **Drive all the way:** arrival = leave_home + drive_i + garage walk.
 6. L_i = max(0, arrival_i − deadline) minutes. `gen_cost = money + VOT × (deadline − leave_home) + mean(VOT × L + hard_penalty × 1(L > 0))`; VOT ($30/h) and hard_penalty ($75 demo preset; 0 = soft mode) are user settings.
 
-**Ranking:** `rank` by gen_cost, `sched_rank` by money + time cost only (no risk). Infeasible candidates go last; drive-all-the-way is a reference row (shown, not ranked) while money is not priced; partial costs are ranked but flagged.
+**Train choice (Phase 1.8):** each station is planned for its last `TRAIN_CHOICE_T` (3) on-time trains (latest, −1, −2), each with its own leave_home and catch-next list, scored with shared draws; the station row is the variant with the lowest gen_cost, the others are kept as "also considered". `reprice()` re-selects per station when VOT or penalty change; deadline or margin changes re-plan.
+
+**Ranking:** `rank` by gen_cost (chosen train), `sched_rank` by money + time cost of the **latest-train variant** (the timetable plan, no risk). Infeasible candidates go last; drive-all-the-way is a reference row (shown, not ranked) while money is not priced; partial costs are ranked but flagged.
 
 **Core-claim check:** `python -m src.scoring` writes `eval/core_claim.md` (demo preset + hard_penalty {0, 25, 75, 150} × margin {0, 5, 10} sweep, leave_home re-planned per margin).
 

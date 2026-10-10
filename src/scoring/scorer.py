@@ -212,6 +212,28 @@ def _path_arrival(hb_arrival: np.ndarray, path_schedule: np.ndarray) -> np.ndarr
     return out
 
 
+def choose(flat: list[ScoredOption]) -> list[ScoredOption]:
+    """Train choice: per station row (candidate label), keep the variant with the lowest
+    gen_cost (tie: the later train) and attach all variants; then rank.
+
+    sched_basis_usd = the latest-train variant's money + time cost (the timetable plan),
+    so sched_rank stays the no-risk baseline.
+    """
+    groups: dict[str, list[ScoredOption]] = {}
+    for s in flat:
+        groups.setdefault(s.candidate_id, []).append(replace(s, variants=()))
+    chosen = []
+    for variants in groups.values():
+        variants.sort(key=lambda v: v.candidate.variant)
+        latest = variants[0]
+        priced = [v for v in variants if v.gen_cost_usd is not None]
+        best = min(priced, key=lambda v: (v.gen_cost_usd, v.candidate.variant)) if priced else latest
+        basis = (None if latest.money_usd is None or latest.time_cost_usd is None
+                 else latest.money_usd + latest.time_cost_usd)
+        chosen.append(replace(best, variants=tuple(variants), sched_basis_usd=basis))
+    return rank_options(chosen)
+
+
 def rank_options(scored: list[ScoredOption]) -> list[ScoredOption]:
     """Assign rank (gen_cost) and sched_rank (money + time_cost); infeasible last.
 
@@ -225,7 +247,8 @@ def rank_options(scored: list[ScoredOption]) -> list[ScoredOption]:
         return {id(s): i + 1 for i, s in enumerate(ranked)}
 
     rank = ordered(lambda s: s.gen_cost_usd)
-    sched = ordered(lambda s: s.money_usd + s.time_cost_usd)
+    sched = ordered(lambda s: s.sched_basis_usd if s.sched_basis_usd is not None
+                    else s.money_usd + s.time_cost_usd)
     return [replace(s, rank=rank.get(id(s)), sched_rank=sched.get(id(s))) for s in scored]
 
 
@@ -234,10 +257,13 @@ def reprice(scored: list[ScoredOption], settings: Settings, inputs: ScoringInput
 
     Exact: exp_late_cost = VOT × E[L] / 60 + penalty × P(L > 0), and P(L > 0) = 1 − p_on_time.
     Only valid for settings that do not change the simulation (same deadline, margin, seed, N).
+    Accepts chosen rows (their variants are re-priced) or the flat variant list; re-selects
+    the train per station via choose().
     """
     deadline = local_epoch(inputs.service_date, settings.deadline_s)
+    flat = [v for s in scored for v in (s.variants or (s,))]
     out = []
-    for s in scored:
+    for s in flat:
         if s.p_on_time is None:
             out.append(s)
             continue
@@ -245,9 +271,9 @@ def reprice(scored: list[ScoredOption], settings: Settings, inputs: ScoringInput
         late = settings.vot_usd_per_h * s.expected_late_min / 60 + settings.hard_penalty_usd * (1 - s.p_on_time)
         gen = None if s.money_usd is None else s.money_usd + time_cost + late
         out.append(replace(s, time_cost_usd=time_cost, exp_late_cost_usd=late, gen_cost_usd=gen))
-    return rank_options(out)
+    return choose(out)
 
 
 def score_all(cands: list[Candidate], inputs: ScoringInputs, settings: Settings) -> list[ScoredOption]:
     u = common_uniforms(settings)
-    return rank_options([score_candidate(c, inputs, settings, u) for c in cands])
+    return choose([score_candidate(c, inputs, settings, u) for c in cands])

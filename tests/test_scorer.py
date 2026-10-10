@@ -133,5 +133,5 @@ def test_ranking_rules(inputs):
     infeasible = replace(cands[0], infeasible=True, infeasible_reason="test", label="late SE")
     scored = by_id(rank_options(score_all(cands + [infeasible], inputs, s)))
     assert scored["Drive all the way (not priced)"].rank is None  # reference row
-    assert scored["late SE"].rank == 3  # after both feasible options despite equal cost
+    assert scored["late SE"].rank == max(s.rank for s in scored.values() if s.rank)  # infeasible last
     assert {scored["SE → NY"].rank, scored["CM → HB + PATH"].rank} == {1, 2}

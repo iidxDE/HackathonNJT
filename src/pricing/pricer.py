@@ -14,7 +14,8 @@ Every unknown is None with a note; every known value carries its source.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
+from functools import wraps
 from datetime import date
 from pathlib import Path
 
@@ -30,13 +31,25 @@ METERS_PER_MILE = 1609.34
 ROUND_TRIP = 2
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, eq=False)
 class PriceTables:
     fares: pd.DataFrame  # njt_fares.csv
     path_fares: pd.DataFrame  # path_fares.csv
     parking: pd.DataFrame  # parking.csv
     driving_costs: pd.DataFrame  # driving_costs.csv
     drive_dests: pd.DataFrame  # drive_destinations.csv
+    memo: dict = field(default_factory=dict, repr=False)  # lookups below; tables are read-only
+
+
+def _memoized(fn):
+    """Cache a pure lookup on the PriceTables it reads (results are immutable)."""
+    @wraps(fn)
+    def inner(tables: PriceTables, *args, **kwargs):
+        key = (fn.__name__, args, tuple(sorted(kwargs.items())))
+        if key not in tables.memo:
+            tables.memo[key] = fn(tables, *args, **kwargs)
+        return tables.memo[key]
+    return inner
 
 
 def load_price_tables(fares: Path = config.FARES_CSV, path_fares: Path = config.PATH_FARES_CSV,
@@ -56,6 +69,7 @@ def _source(row: pd.Series) -> tuple[str, str | None]:
     return row["source_url"], (row["checked_date"] or None)
 
 
+@_memoized
 def fare_item(tables: PriceTables, origin: str, dest: str) -> CostItem:
     rows = tables.fares[(tables.fares["origin_code"] == origin) & (tables.fares["dest_code"] == dest)]
     if rows.empty:
@@ -74,14 +88,17 @@ def fare_item(tables: PriceTables, origin: str, dest: str) -> CostItem:
     return CostItem(ROUND_TRIP * float(row["one_way_adult"]), url, checked, note)
 
 
+@_memoized
 def path_fare_item(tables: PriceTables, travel_date: date | None = None,
-                   rail_route: str | None = None) -> CostItem:
-    """2 × PATH fare; a dated rule (valid_from..valid_to, weekdays, GTFS routes) overrides."""
+                   rail_route: str | None = None, rail_alight: str | None = None) -> CostItem:
+    """2 × PATH fare. A dated rule (valid_from..valid_to, weekdays_only, `lines` = GTFS
+    route ids) overrides it when the rail leg ends at HB on one of those lines
+    (Portal cutover cross-honoring)."""
     fares = tables.path_fares
-    if travel_date is not None and "valid_from" in fares:
+    if travel_date is not None and rail_alight == "HB" and "valid_from" in fares:
         ymd = travel_date.isoformat()
         for _, rule in fares[fares["valid_from"] != ""].iterrows():
-            routes = set(filter(None, rule["gtfs_routes"].split(";")))
+            routes = set(filter(None, rule["lines"].split(";")))
             if (rule["valid_from"] <= ymd <= rule["valid_to"]
                     and (rule["weekdays_only"].lower() != "true" or travel_date.weekday() < 5)
                     and (not routes or rail_route in routes)):
@@ -94,6 +111,7 @@ def path_fare_item(tables: PriceTables, travel_date: date | None = None,
     return CostItem(ROUND_TRIP * float(row["amount"]), url, checked, f"2 × single ride {row['amount']}")
 
 
+@_memoized
 def parking_item(tables: PriceTables, station: str, resident: bool = False,
                  park_hhmm: str | None = None) -> tuple[CostItem, set[str]]:
     """Cheapest usable daily lot. park_hhmm (local "HH:MM") applies non_resident_from limits.
@@ -189,6 +207,7 @@ def price_candidate(c: Candidate, tables: PriceTables, drive_cache: DriveCache,
     parking, flags = parking_item(tables, c.access_station, resident, park_hhmm)
     tolls, fuel = drive_items(tables, drive_cache, c, mpg)
     costs = CostBreakdown(fare=fare_item(tables, origin, dest), parking=parking, tolls=tolls, fuel=fuel,
-                          path_fare=path_fare_item(tables, _local_date(rail), rail.gtfs_line if rail else None)
+                          path_fare=path_fare_item(tables, _local_date(rail), rail.gtfs_line if rail else None,
+                                                   rail.to_stop if rail else None)
                           if uses_path else None, flags=flags)
     return replace(c, costs=costs)

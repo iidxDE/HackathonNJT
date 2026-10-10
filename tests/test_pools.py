@@ -65,11 +65,14 @@ def test_l1_draws_board_and_alight_from_same_run():
     pools = build_pools(observations(*runs))
     samples, usage = sample(pools, "CM", "HB", "7", True, "am_peak", 500, np.random.default_rng(1))
     assert usage.fallback_level is FallbackLevel.LINE_TOWARD_NY_PERIOD
-    assert usage.run_count == samples.run_count == 8
+    # Alight-anchored: run 9 (no CM record) is in the population with board delay 0.
+    assert usage.run_count == samples.run_count == 9
+    assert usage.board_zero_share == pytest.approx(1 / 9)
     assert usage.pool_key == PoolKey("7", True, "am_peak")
     d = samples.delays_s
     assert d.shape == (500, 2) and not np.isnan(d).any()
-    assert np.all(d[:, 1] - d[:, 0] == 1000)
+    observed = d[:, 1] != 5000
+    assert np.all(d[observed, 1] - d[observed, 0] == 1000) and np.all(d[~observed, 0] == 0)
     assert usage.delay_field_at_stop == {"CM": DelayField.GTFS, "HB": DelayField.GTFS}
 
 
@@ -90,8 +93,10 @@ def test_empty_cell_falls_back_to_l2_with_zero_board_delay():
     assert usage.fallback_level is FallbackLevel.TOWARD_NY_PERIOD
     assert usage.pool_key == PoolKey(None, True, "am_peak")
     assert usage.run_count == 6
-    assert np.all(samples.delays_s[:, 0] == 0)
-    assert usage.delay_field_at_stop["ST"] is DelayField.ASSUMED_ZERO
+    # Boarding delay is observed for the line-8 runs (50 s), zero-filled for the others.
+    assert set(np.unique(samples.delays_s[:, 0])) <= {0.0, 50.0}
+    assert usage.board_zero_share == pytest.approx(4 / 6)
+    assert usage.delay_field_at_stop["ST"] is DelayField.GTFS
 
 
 def test_l3_then_no_data():
@@ -111,17 +116,18 @@ def test_negative_delays_kept():
     assert np.all(samples.delays_s == [-120, -60])
 
 
-def test_l1b_keeps_the_line_before_mixing_lines():
-    # Line 7: only 2 runs stop at RT, 6 runs reach HB. Line 5 (another line into HB) is faster.
-    runs = [obs_rows(f"7{i}", {"RT": (0, 30), "HB": (0, 240)}) for i in range(2)]
-    runs += [obs_rows(f"7x{i}", {"ST": (0, 30), "HB": (0, 240)}) for i in range(4)]
+def test_pool_is_anchored_on_the_alight_stop():
+    # Line 7: 2 runs stop at RT, 4 run express (ST only); all 6 reach HB. Line 5 also reaches HB.
+    runs = [obs_rows(f"7{i}", {"RT": (0, 30), "ST": (0, 20), "HB": (0, 240 + i)}) for i in range(2)]
+    runs += [obs_rows(f"7x{i}", {"ST": (0, 30), "HB": (0, 300 + i)}) for i in range(4)]
     runs += [obs_rows(f"5{i}", {"SF": (0, 0), "HB": (0, 0)}, route="5") for i in range(20)]
     pools = build_pools(observations(*runs))
-    samples, usage = sample(pools, "RT", "HB", "7", True, "am_peak", 200, np.random.default_rng(0))
-    assert usage.fallback_level is FallbackLevel.LINE_TOWARD_NY_PERIOD_ALIGHT
-    assert usage.pool_key == PoolKey("7", True, "am_peak") and usage.run_count == 6
-    assert np.all(samples.delays_s[:, 0] == 0) and np.all(samples.delays_s[:, 1] == 240)
-    assert usage.delay_field_at_stop["RT"] is DelayField.ASSUMED_ZERO
+    rt, rt_use = sample(pools, "RT", "HB", "7", True, "am_peak", 300, np.random.default_rng(7))
+    st, st_use = sample(pools, "ST", "HB", "7", True, "am_peak", 300, np.random.default_rng(7))
+    assert rt_use.fallback_level is FallbackLevel.LINE_TOWARD_NY_PERIOD and rt_use.run_count == 6
+    assert rt_use.board_zero_share == pytest.approx(4 / 6) and st_use.board_zero_share == 0
+    # Same rng → identical alight draws whatever the boarding station; line 5 never mixed in.
+    assert np.array_equal(rt.delays_s[:, 1], st.delays_s[:, 1]) and rt.delays_s[:, 1].min() >= 240
 
 
 def test_stop_coverage_diagnostic_classifies_missing_runs():

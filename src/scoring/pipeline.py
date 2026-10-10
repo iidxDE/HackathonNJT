@@ -70,23 +70,67 @@ def evaluate(data: DemoData, settings: Settings) -> list[ScoredOption]:
     return reprice(simulate(data, settings), settings, data.inputs)
 
 
+def build_stamp() -> str:
+    """Short git hash of the code that produced a result (+ "-dirty" with uncommitted changes)."""
+    import subprocess
+
+    def git(*args: str) -> str:
+        return subprocess.run(["git", *args], cwd=config.REPO_ROOT, capture_output=True, text=True,
+                              timeout=5).stdout.strip()
+
+    try:
+        head = git("rev-parse", "--short", "HEAD")
+        dirty = git("status", "--porcelain", "--untracked-files=no")
+        return (head or "unknown") + ("-dirty" if dirty else "")
+    except Exception:  # noqa: BLE001 — a stamp must never break the app
+        return "unknown"
+
+
 def top(scored: list[ScoredOption], field: str) -> str | None:
     best = [s for s in scored if getattr(s, field) == 1]
     return best[0].candidate_id if best else None
 
 
-def sweep(data: DemoData, base: Settings, penalties=(0, 25, 75, 150),
-          margins_min=(0, 5, 10)) -> pd.DataFrame:
-    """Top-1 by gen_cost vs by money + time only, over penalty × margin (re-planned per margin)."""
+def chosen_train(s: ScoredOption) -> str:
+    t = s.candidate.planned_train
+    return t.train_number if t else "drive"
+
+
+def timetable_train(s: ScoredOption) -> str:
+    """Train of the latest-train variant (the timetable plan)."""
+    latest = s.variants[0] if s.variants else s
+    return chosen_train(latest)
+
+
+def top_option(scored: list[ScoredOption], field: str) -> tuple[str, str] | None:
+    """(station row, train) of the rank-1 option; for sched_rank, the timetable train."""
+    best = [s for s in scored if getattr(s, field) == 1]
+    if not best:
+        return None
+    return best[0].candidate_id, (chosen_train(best[0]) if field == "rank" else timetable_train(best[0]))
+
+
+def sweep(data: DemoData, base: Settings, penalties=(0, 25, 75, 150), margins_min=(0, 5, 10),
+          simulate_fn=None) -> pd.DataFrame:
+    """Top-1 with risk vs schedule-only, over penalty × margin (re-planned per margin).
+
+    flips_station: the station row differs. flips_option: the station or the train
+    differs (risk picks an earlier train at the same station). simulate_fn(settings)
+    lets the UI pass its cached simulate, so CLI and UI share this code path.
+    """
+    simulate_fn = simulate_fn or (lambda s: simulate(data, s))
     rows = []
     for margin in margins_min:
-        simulated = simulate(data, replace(base, margin_s=margin * 60))
+        simulated = simulate_fn(replace(base, margin_s=margin * 60))
         for penalty in penalties:
             scored = reprice(simulated, replace(base, margin_s=margin * 60, hard_penalty_usd=penalty),
                              data.inputs)
+            risk, sched = top_option(scored, "rank"), top_option(scored, "sched_rank")
             rows.append({"hard_penalty_usd": penalty, "margin_min": margin,
-                         "top_rank": top(scored, "rank"), "top_sched_rank": top(scored, "sched_rank"),
-                         "flips": top(scored, "rank") != top(scored, "sched_rank"),
+                         "top_rank": f"{risk[0]} ({risk[1]})" if risk else None,
+                         "top_sched_rank": f"{sched[0]} ({sched[1]})" if sched else None,
+                         "flips_station": bool(risk and sched and risk[0] != sched[0]),
+                         "flips_option": risk != sched,
                          "p_on_time": {s.candidate_id: round(s.p_on_time, 3)
                                        for s in scored if s.p_on_time is not None}})
     return pd.DataFrame(rows)

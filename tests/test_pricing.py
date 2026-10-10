@@ -168,15 +168,17 @@ def test_cutover_cross_honor_makes_path_free_only_in_window():
     t = tables()
     rule = {"fare_type": "portal_cutover_cross_honor", "amount": "0.00", "source_url": URL,
             "checked_date": "2026-10-10", "notes": "test", "valid_from": "2026-10-11",
-            "valid_to": "2026-11-14", "weekdays_only": "True", "gtfs_routes": "7;8"}
-    fares = pd.concat([t.path_fares.assign(valid_from="", valid_to="", weekdays_only="", gtfs_routes=""),
+            "valid_to": "2026-11-14", "weekdays_only": "True", "lines": "7;8;2;3"}
+    fares = pd.concat([t.path_fares.assign(valid_from="", valid_to="", weekdays_only="", lines=""),
                        pd.DataFrame([rule])], ignore_index=True)
     t = PriceTables(t.fares, fares, t.parking, t.driving_costs, t.drive_dests)
-    assert path_fare_item(t, d(2026, 10, 13), "7").usd == 0.0  # Tue, M&E, in window
-    assert path_fare_item(t, d(2026, 10, 13), "8").source_url == URL  # Gladstone too
-    assert path_fare_item(t, d(2026, 10, 17), "7").usd == pytest.approx(6.50)  # Saturday
-    assert path_fare_item(t, d(2026, 11, 16), "7").usd == pytest.approx(6.50)  # after window
-    assert path_fare_item(t, d(2026, 10, 13), "10").usd == pytest.approx(6.50)  # not Midtown Direct
+    assert path_fare_item(t, d(2026, 10, 13), "7", "HB").usd == 0.0  # Tue, M&E to HB, in window
+    assert path_fare_item(t, d(2026, 10, 13), "8", "HB").source_url == URL  # Gladstone too
+    assert path_fare_item(t, d(2026, 10, 13), "3", "HB").usd == 0.0  # Montclair-Boonton too
+    assert path_fare_item(t, d(2026, 10, 17), "7", "HB").usd == pytest.approx(6.50)  # Saturday
+    assert path_fare_item(t, d(2026, 11, 16), "7", "HB").usd == pytest.approx(6.50)  # after window
+    assert path_fare_item(t, d(2026, 10, 13), "10", "HB").usd == pytest.approx(6.50)  # not a diverted line
+    assert path_fare_item(t, d(2026, 10, 13), "7", "NP").usd == pytest.approx(6.50)  # rail leg not to HB
 
 
 def test_non_resident_morning_ban_makes_parking_unavailable():

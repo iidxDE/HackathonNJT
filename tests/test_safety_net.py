@@ -147,8 +147,9 @@ def test_golden_demo_candidates(deadline_s, se_train, hb_train):
 
     cands = build_candidates(load_feed(config.GTFS_NJT_RAIL_DIR), load_feed(config.GTFS_PATH_DIR),
                              flat_drive(20), TUE, deadline_s)
-    assert len(cands) == 9
-    by_label = {c.label: c for c in cands}
+    assert len({c.label for c in cands}) == 9  # station rows; each may carry up to 3 train variants
+    assert max(sum(c.label == lab for c in cands) for lab in {c.label for c in cands}) <= config.TRAIN_CHOICE_T
+    by_label = {c.label: c for c in cands if c.variant == 0}  # latest on-time train = timetable plan
     for s in ("CM", "ST", "RT"):  # Portal cutover: no one-seat ride to NY, but HB + PATH
         assert by_label[f"{s} → NY"].infeasible
         assert by_label[f"{s} → NY"].infeasible_reason == "Midtown Direct diverted to Hoboken (Portal cutover)"

@@ -75,10 +75,30 @@ def flags_text(s: ScoredOption) -> str:
     return ", ".join(FLAG_LABELS.get(f, f) for f in sorted(s.flags) if f in FLAG_LABELS) or ""
 
 
+def infeasible_reason(s: ScoredOption) -> str:
+    """Why a row is not an option, in plain words."""
+    c = s.candidate
+    if "parking_unavailable" in s.flags:
+        return "no daily parking for a non-resident at this time (details in the cost breakdown)"
+    return c.infeasible_reason or "no train meets the deadline"
+
+
 def row_order(s: ScoredOption) -> tuple:
+    if "infeasible" in s.flags:
+        return (3, s.candidate_id)
     if s.rank is not None:
         return (0, s.rank)
     return (1, 0) if s.candidate.access_station == "DRIVE" else (2, s.candidate_id)
+
+
+def variant_line(v: ScoredOption) -> str:
+    t = v.candidate.planned_train
+    on_time = "—" if v.p_on_time is None else f"{round(100 * v.p_on_time)}/100"
+    return f"{t.train_number if t else 'drive'}: leave {hhmm(v.candidate.leave_home)}, on time {on_time}"
+
+
+def latest_variant(s: ScoredOption) -> ScoredOption:
+    return s.variants[0] if s.variants else s
 
 
 def ranked_table(scored: list[ScoredOption]) -> pd.DataFrame:
@@ -87,20 +107,26 @@ def ranked_table(scored: list[ScoredOption]) -> pd.DataFrame:
         c = s.candidate
         train = c.planned_train
         reference = c.access_station == "DRIVE"
+        infeasible = "infeasible" in s.flags
+        latest = latest_variant(s)
         rows.append({
-            "Rank": str(s.rank) if s.rank is not None else ("ref" if reference else "—"),
+            "Rank": "—" if infeasible else (str(s.rank) if s.rank is not None else ("ref" if reference else "—")),
             "Option": s.candidate_id,
             "Leave home": hhmm(c.leave_home),
-            "Planned train": train.train_number if train else ("drive" if reference else "—"),
+            "Train (chosen)": train.train_number if train else ("drive" if reference else "—"),
+            "Timetable plan": ("—" if infeasible or latest.candidate.variant == c.variant
+                               else variant_line(latest) + " (latest)"),
             "On time (of 100)": "—" if s.p_on_time is None else str(round(100 * s.p_on_time)),
             "Arrival p50 / p90": "—" if s.arrival_p50 is None else f"{hhmm(s.arrival_p50)} / {hhmm(s.arrival_p90)}",
             "$/day": "cost not priced" if reference else usd(s.money_usd),
             "Risk-adjusted $": usd(s.gen_cost_usd),
-            "Schedule-only rank": str(s.sched_rank) if s.sched_rank is not None else "—",
+            "Schedule-only rank": "—" if infeasible or s.sched_rank is None else str(s.sched_rank),
             "Depends on": ", ".join(EXPOSURE_LABELS[a] for a in sorted(c.exposure or (), key=lambda a: a.value))
                           or ("road crossing (not modeled)" if reference else "—"),
-            "Flags": flags_text(s),
-            "_infeasible": "infeasible" in s.flags, "_flip": s.rank is not None and s.rank != s.sched_rank,
+            "Flags": infeasible_reason(s) if infeasible else flags_text(s),
+            "_infeasible": infeasible,
+            "_flip": not infeasible and s.rank is not None and (s.rank != s.sched_rank
+                                                                 or latest.candidate.variant != c.variant),
         })
     return pd.DataFrame(rows)
 
@@ -166,27 +192,41 @@ st.info("Reliability is estimated from about one weekday of observed NJ Transit 
 st.warning("Delay history predates the Portal cutover; Hoboken/PATH crowding and PATH delays are not modeled "
            "(optimistic for Hoboken options).")
 
-best = next((s for s in scored if s.rank == 1), None)
+best = next((s for s in scored if s.rank == 1 and "infeasible" not in s.flags), None)
 if best:
     train = best.candidate.planned_train
-    st.subheader(f"Best option: {best.candidate_id}. Leave {hhmm(best.candidate.leave_home)}, "
-                 f"train {train.train_number if train else '—'}, on time {round(100 * best.p_on_time)} of 100 "
-                 f"mornings, {usd_md(best.money_usd)}/day, risk-adjusted {usd_md(best.gen_cost_usd)}.")
+    latest = latest_variant(best)
+    contrast = ("" if latest.candidate.variant == best.candidate.variant
+                else f" The timetable plan would be {variant_line(latest)}.")
+    st.subheader(f"Best option: {best.candidate_id}, train {train.train_number if train else '—'}. "
+                 f"Leave {hhmm(best.candidate.leave_home)}, on time {round(100 * best.p_on_time)} of 100 "
+                 f"mornings, {usd_md(best.money_usd)}/day, risk-adjusted {usd_md(best.gen_cost_usd)}.{contrast}")
 else:
     st.warning("No option can be ranked for these settings.")
 
 table = ranked_table(scored)
 st.dataframe(style(table), hide_index=True, width="stretch")
-st.caption(r"Highlighted: risk changes this option's rank. Grey: no train meets the deadline on Tue 10-13 "
-           r"(Portal Cutover: Morris & Essex trains end at Hoboken). Risk-adjusted \$ = \$/day + value of time "
-           r"from leaving home to the deadline + expected cost of lateness. \$/day is a round trip.")
+st.caption(r"Highlighted: risk changes this option's rank or train. Grey: not an option (reason in Flags). "
+           r"The chosen train is the cheapest of the last 3 on-time trains on risk-adjusted cost; the timetable plan "
+           r"is the latest on-time train. Risk-adjusted \$ = \$/day + value of time from leaving home to the "
+           r"deadline + expected cost of lateness. \$/day is a round trip.")
 
 st.header("Options in detail")
 for s in sorted(scored, key=row_order):
     c = s.candidate
     with st.expander(s.candidate_id + (" (no train)" if not c.legs else "")):
-        if c.infeasible_reason:
-            st.write(f"**Infeasible:** {c.infeasible_reason}.")
+        if "infeasible" in s.flags:
+            st.write(f"**Not an option:** {infeasible_reason(s)}.")
+        if len(s.variants) > 1:
+            st.markdown("**Trains considered** (last on-time trains; the cheapest risk-adjusted is chosen)")
+            st.dataframe(pd.DataFrame([{
+                "Train": v.candidate.planned_train.train_number if v.candidate.planned_train else "—",
+                "Plan": "latest (timetable)" if v.candidate.variant == 0 else f"{v.candidate.variant} earlier",
+                "Leave home": hhmm(v.candidate.leave_home),
+                "On time (of 100)": "—" if v.p_on_time is None else str(round(100 * v.p_on_time)),
+                "Risk-adjusted $": usd(v.gen_cost_usd),
+                "Chosen": "yes" if v.candidate.variant == c.variant else "",
+            } for v in s.variants]), hide_index=True)
         st.markdown("**Cost breakdown (per commuting day)**")
         st.dataframe(cost_rows(s), hide_index=True, width="stretch")
         if s.p_on_time is not None:
@@ -201,6 +241,7 @@ for s in sorted(scored, key=row_order):
             st.markdown("**Evidence (delay pools)**")
             st.dataframe(pd.DataFrame([{
                 "Train": u.train_number, "Pool level": u.fallback_level.value, "Runs": u.run_count,
+                "Boarding delay zero-filled": f"{u.board_zero_share:.0%}",
                 "Pool key": f"line {u.pool_key.line or 'all'}, toward NY {u.pool_key.toward_ny}, "
                             f"period {u.pool_key.period or 'all'}",
                 "Delay field": ", ".join(f"{k}: {v.value}" for k, v in u.delay_field_at_stop.items()),
@@ -211,26 +252,26 @@ for s in sorted(scored, key=row_order):
             st.markdown("**Notes**\n" + "\n".join(f"- {n}" for n in c.notes))
 
 st.header("Does risk change the answer?")
-ranked = [s for s in scored if s.rank is not None]
-st.dataframe(pd.DataFrame([{"Option": s.candidate_id, "Rank (with risk)": s.rank,
-                            "Schedule-only rank": s.sched_rank} for s in sorted(ranked, key=lambda s: s.rank)]),
-             hide_index=True)
-flip = pipeline.top(scored, "rank") != pipeline.top(scored, "sched_rank")
-st.write(f"With these settings the top option **{'changes' if flip else 'does not change'}** when risk is "
-         f"priced in: {pipeline.top(scored, 'rank')} vs schedule-only {pipeline.top(scored, 'sched_rank')}.")
+ranked = [s for s in scored if s.rank is not None and "infeasible" not in s.flags]
+st.dataframe(pd.DataFrame([{"Option": s.candidate_id, "Train (with risk)": pipeline.chosen_train(s),
+                            "Rank (with risk)": s.rank, "Timetable train": pipeline.timetable_train(s),
+                            "Schedule-only rank": s.sched_rank}
+                           for s in sorted(ranked, key=lambda s: s.rank)]), hide_index=True)
+risk, sched = pipeline.top_option(scored, "rank"), pipeline.top_option(scored, "sched_rank")
+fmt = lambda o: f"{o[0]} on train {o[1]}" if o else "—"  # noqa: E731
+st.write(f"With these settings the top option **{'changes' if risk != sched else 'does not change'}** when "
+         f"risk is priced in: {fmt(risk)} vs schedule-only {fmt(sched)}.")
 
-rows = []
-for m in (0, 5, 10):
-    sim = simulate(settings.deadline_s, m * 60, settings.mpg)
-    for p in (0, 25, 75, 150):
-        r = reprice(sim, replace(settings, margin_s=m * 60, hard_penalty_usd=p), data.inputs)
-        top, sched = pipeline.top(r, "rank"), pipeline.top(r, "sched_rank")
-        rows.append({"Hard penalty $": p, "Margin min": m, "Top with risk": top,
-                     "Top schedule-only": sched, "Flip": "flip" if top != sched else "no flip"})
-st.markdown("**Sweep** (current deadline, VOT and mpg; leave-home re-planned per margin)")
-st.dataframe(pd.DataFrame(rows), hide_index=True, width="stretch")
+sw = pipeline.sweep(data, settings, simulate_fn=lambda x: simulate(x.deadline_s, x.margin_s, x.mpg))
+st.markdown("**Sweep** (current deadline, VOT and mpg; leave-home re-planned per margin; same code as "
+            "eval/core_claim.md)")
+st.dataframe(sw.drop(columns=["p_on_time"]).rename(columns={
+    "hard_penalty_usd": "Hard penalty $", "margin_min": "Margin min", "top_rank": "Top with risk (train)",
+    "top_sched_rank": "Top schedule-only (train)", "flips_station": "Station differs",
+    "flips_option": "Option differs"}), hide_index=True, width="stretch")
 st.caption("Exposure: the Portal bridges matter only while the final cutover (Oct 11 – Nov 14) runs; "
            "the North River tunnels stay the fragile asset until the Hudson Tunnel Project (2035).")
-st.caption("Caveats: about one weekday of AM-peak data; CM → HB has 5 effective runs, so its on-time "
-           "count moves in steps of 20; PATH runs to schedule (not measured); cancelled runs are invisible; "
-           "the NY delay measure is provisional (check A).")
+st.caption("Caveats: about one weekday of AM-peak data; the M&E → HB population is 7 runs (boarding delay "
+           "zero-filled where the boarding stop was not observed); PATH runs to schedule (not measured); "
+           "cancelled runs are invisible; the NY delay measure is provisional (check A).")
+st.caption(f"Build {pipeline.build_stamp()} · N = {config.N_SAMPLES}, seed {config.DEFAULT_SEED}.")

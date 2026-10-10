@@ -166,6 +166,7 @@ STATION_BUFFER_S: dict[str, int] = {"CM": 4 * 60, "ST": 4 * 60, "RT": 4 * 60,
                                     "NP": 6 * 60, "SE": 8 * 60}
 GARAGE_TO_PENN_WALK_S = 5 * 60  # drive-all-the-way: Midtown garage → NY Penn
 CATCH_NEXT_K = 4  # trains kept after the planned one (incl. after the deadline)
+TRAIN_CHOICE_T = 3  # plan the last T on-time trains per station; the scorer picks the cheapest
 LEAVE_HOME_MAX_ROUNDS = 3  # fixed-point iterations for leave_home
 LEAVE_HOME_TOL_S = 30
 PATH_HOBOKEN_STOP = "Hoboken"  # PATH GTFS stop_name; Leg id "PATH:Hoboken"

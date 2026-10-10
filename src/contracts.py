@@ -34,9 +34,8 @@ class InfraAsset(str, Enum):
 class FallbackLevel(str, Enum):
     """Delay pool granularity, finest first. Direction means toward_ny, not GTFS direction_id."""
 
-    LINE_TOWARD_NY_PERIOD = "line_toward_ny_period"  # L1: runs observed at board AND alight
-    LINE_TOWARD_NY_PERIOD_ALIGHT = "line_toward_ny_period_alight"  # L1b: same cell, alight only; board = 0
-    TOWARD_NY_PERIOD = "toward_ny_period"  # L2: runs observed at alight; board delay = 0
+    LINE_TOWARD_NY_PERIOD = "line_toward_ny_period"  # L1: runs observed at the alight stop
+    TOWARD_NY_PERIOD = "toward_ny_period"  # L2: as L1, all lines
     TOWARD_NY = "toward_ny"  # L3: as L2, all periods
     NO_DATA = "no_data"  # L4: zero delays (schedule baseline); UI must warn
 
@@ -195,6 +194,7 @@ class Candidate:
     infeasible: bool = False
     infeasible_reason: str | None = None
     label: str = ""
+    variant: int = 0  # train choice: 0 = latest on-time train (timetable plan), k = k-th earlier
     flags: frozenset[str] = frozenset()  # e.g. exposure_varies
     notes: tuple[str, ...] = ()  # free-text caveats for the UI
 
@@ -304,9 +304,9 @@ class DelaySamples:
 class PoolUsage:
     """Which pool scored a rail leg, for the UI confidence indicator.
 
-    run_count is the effective sample at the chosen level: at L1, runs
-    observed at both the boarding and alighting stops; at L2/L3, runs
-    observed at the alighting stop; 0 at NO_DATA. delay_field_at_stop says
+    run_count is the population at the chosen level: runs observed at the
+    alighting stop (0 at NO_DATA). board_zero_share is the share of those runs
+    whose boarding delay was not observed and set to 0. delay_field_at_stop says
     which delay measure each stop's values came from.
     """
 
@@ -315,6 +315,7 @@ class PoolUsage:
     run_count: int
     delay_field_at_stop: Mapping[str, DelayField]
     train_number: str | None = None  # set by the scorer, which knows the leg
+    board_zero_share: float = 0.0
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "delay_field_at_stop", dict(self.delay_field_at_stop))
@@ -350,6 +351,10 @@ class ScoredOption:
     active_alerts: tuple[str, ...] = ()
     seed: int | None = None
     n_samples: int = 0
+    # Train choice: every planned variant of this station row (incl. this one), and the
+    # latest-train variant's money + time cost, which sched_rank uses (timetable baseline).
+    variants: tuple["ScoredOption", ...] = ()
+    sched_basis_usd: float | None = None
 
     def __post_init__(self) -> None:
         if self.p_on_time is not None and not 0.0 <= self.p_on_time <= 1.0:

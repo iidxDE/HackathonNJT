@@ -57,6 +57,22 @@ SNAPSHOT_MIN_COUNT_FRACTION = 0.5  # drop if train count < this × rolling media
 SNAPSHOT_ROLLING_WINDOW = 21  # snapshots (~10 min at 30 s polling)
 SNAPSHOT_MAX_STALENESS_S = 120  # drop if newest record is older than this
 
+# --- Feed ↔ GTFS join --------------------------------------------------------
+# Stops are matched by station name (feed name → 2-char code); time breaks ties.
+# Feed SCHED_DEP_TIME vs GTFS departure at the matched stop must be within
+# STOP_MATCH_MAX_DIFF_S. Typical offsets are ≤ 45 s (GTFS rounds to the minute),
+# but some NEC/NJCL/M&E arrivals at NY carry a feed schedule exactly 13 min
+# later than GTFS. Diffs above STOP_SCHEDULE_AGREE_S are logged as disagreements.
+STOP_MATCH_MAX_DIFF_S = 30 * 60
+STOP_SCHEDULE_AGREE_S = 120
+# Port Jervis runs to Hoboken, not Penn; out of scope (GTFS route_id 6).
+EXCLUDED_ROUTE_IDS: tuple[str, ...] = ("6",)
+
+OBSERVATIONS_PARQUET = ARTIFACTS_DIR / "observations.parquet"
+VEHICLE_RECORDS_PARQUET = ARTIFACTS_DIR / "vehicle_records.parquet"
+SNAPSHOTS_PARQUET = ARTIFACTS_DIR / "snapshots.parquet"
+JOIN_RATES_CSV = ARTIFACTS_DIR / "join_rates.csv"
+
 # --- Delay pools -------------------------------------------------------------
 # (name, start_s, end_s), half-open, local time of day. Covers 00:00–24:00;
 # GTFS times past 24:00 are taken modulo SECONDS_PER_DAY before lookup.

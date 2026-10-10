@@ -1,0 +1,9 @@
+# Python 3.11+ (developed on 3.13). Install: uv pip install --python .venv -r requirements.txt
+pandas==3.0.6
+numpy==2.5.3
+pyarrow==25.0.1
+streamlit==1.65.0
+tzdata==2026.5          # required on Windows for ZoneInfo("America/New_York")
+requests==2.34.2        # build time only (Routes API, Overpass)
+python-dotenv==1.2.4    # build time only (.env API keys)
+pytest==9.1.1

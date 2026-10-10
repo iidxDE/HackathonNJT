@@ -15,7 +15,7 @@ Delays are raw (negatives kept); clamping the boarding delay is the scorer's job
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 
@@ -63,12 +63,35 @@ class ResolvedPool:
     delays_s: np.ndarray
     fields: dict[str, DelayField]
 
+    def __post_init__(self) -> None:
+        self.delays_s.setflags(write=False)  # shared via PoolIndex.memo
+
     @property
     def run_count(self) -> int:
         return int(self.delays_s.shape[0])
 
 
-def _cell(pools: pd.DataFrame, level: FallbackLevel, key: PoolKey) -> pd.DataFrame:
+@dataclass(frozen=True, eq=False)
+class PoolIndex:
+    """pools.parquet split by (level, line, toward_ny, period) once; resolve/sample accept it."""
+
+    cells: dict
+    empty: pd.DataFrame
+    memo: dict = field(default_factory=dict)  # resolve() results; deterministic, so safe to reuse
+
+
+def index_pools(pools: pd.DataFrame) -> PoolIndex:
+    keys = ["level", "line", "toward_ny", "period"]
+    filled = pools.assign(line=pools["line"].astype(object).where(pools["line"].notna(), None),
+                          period=pools["period"].astype(object).where(pools["period"].notna(), None))
+    cells = {tuple(None if pd.isna(v) else v for v in k): rows
+             for k, rows in filled.groupby(keys, dropna=False)}
+    return PoolIndex(cells, pools.iloc[0:0])
+
+
+def _cell(pools: pd.DataFrame | PoolIndex, level: FallbackLevel, key: PoolKey) -> pd.DataFrame:
+    if isinstance(pools, PoolIndex):
+        return pools.cells.get((level.value, key.line, key.toward_ny, key.period), pools.empty)
     rows = pools[pools["level"] == level.value]
     for col, value in (("line", key.line), ("toward_ny", key.toward_ny), ("period", key.period)):
         rows = rows[rows[col].isna()] if value is None else rows[rows[col] == value]
@@ -89,9 +112,19 @@ def _field(rows: pd.DataFrame, stop: str) -> DelayField:
     return DelayField(values[0])
 
 
-def resolve(pools: pd.DataFrame, board_stop: str, alight_stop: str, line: str,
+def resolve(pools: pd.DataFrame | PoolIndex, board_stop: str, alight_stop: str, line: str,
             toward_ny: bool, period: str, min_runs: int = config.POOL_MIN_RUNS) -> ResolvedPool:
     """Pick the finest pool level with >= min_runs effective runs for this leg."""
+    if isinstance(pools, PoolIndex):
+        key = (board_stop, alight_stop, line, toward_ny, period, min_runs)
+        if key not in pools.memo:
+            pools.memo[key] = _resolve(pools, *key)
+        return pools.memo[key]
+    return _resolve(pools, board_stop, alight_stop, line, toward_ny, period, min_runs)
+
+
+def _resolve(pools, board_stop: str, alight_stop: str, line: str, toward_ny: bool, period: str,
+             min_runs: int) -> ResolvedPool:
     if board_stop == alight_stop:
         raise ValueError(f"Board and alight stops are both {board_stop}")
     l1 = PoolKey(line, toward_ny, period)

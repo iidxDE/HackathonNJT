@@ -47,30 +47,62 @@ def _interp(slots_s: np.ndarray, values: np.ndarray, t_s: float) -> float:
     return float(np.interp(t_s, slots_s, values))  # clamps to the end slots outside range
 
 
-def lookup(cache: pd.DataFrame, dest: str, depart_utc: datetime | pd.Timestamp) -> DriveEstimate:
-    rows = cache[cache["dest"] == dest]
-    if rows.empty:
-        raise KeyError(f"No cached drive to {dest!r}")
+@dataclass(frozen=True, eq=False)
+class DestDrive:
+    """One destination's slots as arrays (UTC epoch seconds, ascending)."""
+
+    slots_s: np.ndarray
+    optimistic_s: np.ndarray
+    best_guess_s: np.ndarray
+    pessimistic_s: np.ndarray
+    distance_m: np.ndarray  # BEST_GUESS rows
+    toll_usd: np.ndarray
+    fetched_at: tuple[str, ...]
+
+
+def _index_dest(rows: pd.DataFrame) -> DestDrive:
+    wide = rows.pivot_table(index="slot_utc", columns="model", values="duration_s").sort_index()
+    best = rows[rows["model"] == BEST_GUESS].set_index("slot_utc").reindex(wide.index)
+    fetched = best["fetched_at"] if "fetched_at" in best else pd.Series(None, index=best.index)
+    return DestDrive(np.array([t.timestamp() for t in wide.index]), wide[OPTIMISTIC].to_numpy(float),
+                     wide[BEST_GUESS].to_numpy(float), wide[PESSIMISTIC].to_numpy(float),
+                     best["distance_m"].to_numpy(float), best["toll_usd"].to_numpy(float),
+                     tuple(_iso_date(v) for v in fetched))
+
+
+def index_drive_cache(cache: pd.DataFrame) -> dict[str, DestDrive]:
+    """Pre-pivot the cache once per process (lookup accepts this or the raw table)."""
+    return {dest: _index_dest(rows) for dest, rows in cache.groupby("dest")}
+
+
+def lookup(cache: pd.DataFrame | dict[str, DestDrive], dest: str,
+           depart_utc: datetime | pd.Timestamp) -> DriveEstimate:
+    if isinstance(cache, dict):
+        if dest not in cache:
+            raise KeyError(f"No cached drive to {dest!r}")
+        d = cache[dest]
+    else:
+        rows = cache[cache["dest"] == dest]
+        if rows.empty:
+            raise KeyError(f"No cached drive to {dest!r}")
+        d = _index_dest(rows)
     t = pd.Timestamp(depart_utc)
     if t.tzinfo is None:
         raise ValueError("depart_utc must be timezone-aware")
     t_s = t.timestamp()
-    wide = rows.pivot_table(index="slot_utc", columns="model", values="duration_s").sort_index()
-    slots_s = np.array([s.timestamp() for s in wide.index])
-    models = [_interp(slots_s, wide[m].to_numpy(float), t_s) for m in (OPTIMISTIC, BEST_GUESS, PESSIMISTIC)]
+    models = [_interp(d.slots_s, v, t_s) for v in (d.optimistic_s, d.best_guess_s, d.pessimistic_s)]
     low, mode, high = sorted(models)
     best_guess = models[1]
 
     flags = {AssumptionFlag.DRIVE_VARIANCE_ASSUMED}
-    if t_s < slots_s[0] or t_s > slots_s[-1]:
+    if t_s < d.slots_s[0] or t_s > d.slots_s[-1]:
         flags.add(AssumptionFlag.DRIVE_SLOT_EXTRAPOLATED)
     if low == high:
         flags.add(AssumptionFlag.DRIVE_VARIANCE_DEGENERATE)
 
-    best = rows[rows["model"] == BEST_GUESS]
-    nearest = best.iloc[int(np.argmin(np.abs([s.timestamp() - t_s for s in best["slot_utc"]])))]
-    return DriveEstimate(dest, t.to_pydatetime(), low, mode, high, best_guess, float(nearest["distance_m"]),
-                         float(nearest["toll_usd"]), _iso_date(nearest.get("fetched_at")), frozenset(flags))
+    i = int(np.argmin(np.abs(d.slots_s - t_s)))  # nearest slot for distance / toll
+    return DriveEstimate(dest, t.to_pydatetime(), low, mode, high, best_guess, float(d.distance_m[i]),
+                         float(d.toll_usd[i]), d.fetched_at[i], frozenset(flags))
 
 
 def _iso_date(value) -> str:

@@ -164,16 +164,31 @@ def drive_all_the_way(deadline: datetime, drive_s: DriveTime,
                      label="Drive all the way (not priced)")
 
 
-def build_candidates(njt: GtfsFeed, path: GtfsFeed, drive_s: DriveTime,
+HB_PATH_LABEL = "CM → HB + PATH"
+
+
+def station_options(njt: GtfsFeed, path: GtfsFeed,
+                    service_date: date = config.DEMO_SERVICE_DATE) -> dict[str, list[Option]]:
+    """Every onward option per candidate label for a service date (deadline-independent)."""
+    opts = {f"{s} → NY": direct_options(njt, service_date, s) for s in DIRECT_STATIONS}
+    opts[HB_PATH_LABEL] = hoboken_path_options(njt, path, service_date, "CM")
+    return opts
+
+
+def build_candidates(njt: GtfsFeed | None, path: GtfsFeed | None, drive_s: DriveTime,
                      service_date: date = config.DEMO_SERVICE_DATE,
                      deadline_s: int = config.DEMO_DEADLINE_S,
-                     margin_s: int = config.SAFETY_MARGIN_S) -> list[Candidate]:
-    """The 7 safety-net candidates for an arrive-by deadline at NY Penn (local seconds)."""
+                     margin_s: int = config.SAFETY_MARGIN_S,
+                     options: dict[str, list[Option]] | None = None) -> list[Candidate]:
+    """The 7 safety-net candidates for an arrive-by deadline at NY Penn (local seconds).
+
+    Pass precomputed station_options() to skip the GTFS scan (njt / path unused then).
+    """
     deadline = to_utc(service_date, deadline_s)
-    cands = [plan_station(direct_options(njt, service_date, s), s, s, deadline, drive_s,
-                          f"{s} → NY", service_date, margin_s)
+    opts = options if options is not None else station_options(njt, path, service_date)
+    cands = [plan_station(opts[f"{s} → NY"], s, s, deadline, drive_s, f"{s} → NY", service_date, margin_s)
              for s in DIRECT_STATIONS]
-    cands.append(plan_station(hoboken_path_options(njt, path, service_date, "CM"), "CM", "CM",
-                              deadline, drive_s, "CM → HB + PATH", service_date, margin_s))
+    cands.append(plan_station(opts[HB_PATH_LABEL], "CM", "CM", deadline, drive_s, HB_PATH_LABEL,
+                              service_date, margin_s))
     cands.append(drive_all_the_way(deadline, drive_s, margin_s))
     return cands

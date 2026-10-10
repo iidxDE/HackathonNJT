@@ -34,3 +34,10 @@ Thumbs.db
 # Coverage
 htmlcov/
 .coverage
+
+# Python bytecode
+__pycache__/
+*.pyc
+
+# Local launch config (machine-specific paths)
+.claude/

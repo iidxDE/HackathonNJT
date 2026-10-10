@@ -214,6 +214,26 @@ def rank_options(scored: list[ScoredOption]) -> list[ScoredOption]:
     return [replace(s, rank=rank.get(id(s)), sched_rank=sched.get(id(s))) for s in scored]
 
 
+def reprice(scored: list[ScoredOption], settings: Settings,
+            service_date: date = config.DEMO_SERVICE_DATE) -> list[ScoredOption]:
+    """Re-apply VOT and hard penalty without re-simulating, then re-rank.
+
+    Exact: exp_late_cost = VOT × E[L] / 60 + penalty × P(L > 0), and P(L > 0) = 1 − p_on_time.
+    Only valid for settings that do not change the simulation (same deadline, margin, seed, N).
+    """
+    deadline = local_epoch(service_date, settings.deadline_s)
+    out = []
+    for s in scored:
+        if s.p_on_time is None:
+            out.append(s)
+            continue
+        time_cost = settings.vot_usd_per_h * (deadline - _ts(s.candidate.leave_home)) / 3600
+        late = settings.vot_usd_per_h * s.expected_late_min / 60 + settings.hard_penalty_usd * (1 - s.p_on_time)
+        gen = None if s.money_usd is None else s.money_usd + time_cost + late
+        out.append(replace(s, time_cost_usd=time_cost, exp_late_cost_usd=late, gen_cost_usd=gen))
+    return rank_options(out)
+
+
 def score_all(cands: list[Candidate], inputs: ScoringInputs, settings: Settings) -> list[ScoredOption]:
     u = common_uniforms(settings)
     return rank_options([score_candidate(c, inputs, settings, u) for c in cands])

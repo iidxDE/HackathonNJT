@@ -32,36 +32,45 @@ def load_infra(path: Path = config.INFRA_CSV) -> pd.DataFrame:
     return pd.read_csv(path, dtype=str, keep_default_na=False)
 
 
-def _assets(rows: pd.DataFrame) -> list[frozenset[InfraAsset]]:
-    return [frozenset(a for col, a in INFRA_COLUMNS.items() if r[col] == "1") for _, r in rows.iterrows()]
+# (from_station, to_station) → [(service_pattern, assets), ...]
+InfraIndex = dict[tuple[str, str], list[tuple[str, frozenset[InfraAsset]]]]
 
 
-def leg_exposure(leg: Leg, infra: pd.DataFrame,
+def index_infra(infra: pd.DataFrame) -> InfraIndex:
+    """Group infra.csv by leg once; the tagger accepts this or the raw table."""
+    index: InfraIndex = {}
+    for r in infra.itertuples(index=False):
+        assets = frozenset(a for col, a in INFRA_COLUMNS.items() if getattr(r, col) == "1")
+        index.setdefault((r.from_station, r.to_station), []).append((r.service_pattern, assets))
+    return index
+
+
+def leg_exposure(leg: Leg, infra: pd.DataFrame | InfraIndex,
                  route_names: Mapping[str, str]) -> tuple[frozenset[InfraAsset], list[str]]:
     """Assets one leg traverses, plus notes on how they were determined."""
     if leg.mode in (LegMode.DRIVE, LegMode.WALK):
         return frozenset(), []
-    rows = infra[(infra["from_station"] == leg.from_stop) & (infra["to_station"] == leg.to_stop)]
+    index = infra if isinstance(infra, dict) else index_infra(infra)
+    rows = index.get((leg.from_stop, leg.to_stop), [])
     if leg.mode is LegMode.PATH:
-        if rows.empty:
+        if not rows:
             return frozenset({InfraAsset.PATH_TUNNELS}), [
                 f"{leg.from_stop}→{leg.to_stop}: not in infra.csv; static rule PATH_TUNNELS"]
-        found = frozenset().union(*_assets(rows))
+        found = frozenset().union(*(a for _, a in rows))
         return found, [] if found == {InfraAsset.PATH_TUNNELS} else [
             f"{leg.from_stop}→{leg.to_stop}: infra.csv gives {sorted(a.value for a in found)}"]
 
     name = route_names.get(leg.gtfs_line or "", "")
-    own = rows[rows["service_pattern"].str.startswith(f"{name} →")] if name else rows.iloc[0:0]
+    own = [a for pattern, a in rows if name and pattern.startswith(f"{name} →")]
     notes = []
-    if own.empty:
-        if rows.empty:
+    if not own:
+        if not rows:
             raise KeyError(f"No infra.csv row for rail leg {leg.from_stop}→{leg.to_stop}")
         notes.append(f"{leg.from_stop}→{leg.to_stop}: no pattern for route {leg.gtfs_line}; any line used")
-        own = rows
-    sets = _assets(own)
-    if len(set(sets)) > 1:
+        own = [a for _, a in rows]
+    if len(set(own)) > 1:
         notes.append(f"{leg.from_stop}→{leg.to_stop}: patterns disagree; union used")
-    return frozenset().union(*sets), notes
+    return frozenset().union(*own), notes
 
 
 def legs_exposure(legs, infra, route_names) -> tuple[frozenset[InfraAsset], list[str]]:

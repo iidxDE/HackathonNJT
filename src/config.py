@@ -157,9 +157,24 @@ PATH_ASSUMED_HEADWAY_S = 10 * 60
 TRANSFER_MIN_S: dict[str, int] = {
     "hoboken_njt_to_path": 5 * 60,
     "path_33st_to_penn_walk": 4 * 60,
-    "secaucus_same_system": 6 * 60,
+    "secaucus_same_system": 5 * 60,  # SE <-> TS (Phase 2 decision, transfers.csv)
     "newark_penn_njt_path": 5 * 60,
 }
+
+# --- Router network (Phase 2.1) -----------------------------------------------
+# Cached RAPTOR arrays per service date; transfers.csv is the single transfer source.
+NETWORK_NPZ_TEMPLATE = "network_{ymd}.npz"  # under ARTIFACTS_DIR
+NETWORK_REPORT_MD = REPO_ROOT / "eval" / "network_report.md"
+ROUTER_DEST_STOP = "DEST:NYP"  # virtual NY Penn target (NJT:NY + 0, PATH:33rd Street + walk)
+ROUTER_VIRTUAL_PREFIXES: tuple[str, ...] = ("DEST:",)
+# Portal cutover check: on DEMO_SERVICE_DATE no trip of these NJT routes may
+# serve NY Penn (M&E 7, Gladstone 8, Montclair-Boonton 2 / 3 end at Hoboken).
+CUTOVER_HOBOKEN_ROUTE_IDS: tuple[str, ...] = ("7", "8", "2", "3")
+
+
+def network_npz(service_date: date) -> Path:
+    return ARTIFACTS_DIR / NETWORK_NPZ_TEMPLATE.format(ymd=service_date.strftime("%Y%m%d"))
+
 
 # --- Safety-net candidates (1.3; estimates, flagged in the UI) ---------------
 SAFETY_MARGIN_S = 5 * 60  # slack between parking and the station buffer

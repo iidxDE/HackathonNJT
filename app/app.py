@@ -48,8 +48,10 @@ def demo_data() -> pipeline.DemoData:
 
 
 @st.cache_data(show_spinner=False, max_entries=64)
-def simulate(deadline_s: int, margin_s: int, mpg: float) -> list[ScoredOption]:
-    return pipeline.simulate(demo_data(), Settings(deadline_s=deadline_s, margin_s=margin_s, mpg=mpg))
+def simulate(deadline_s: int, margin_s: int, mpg: float,
+             source: str = config.DEFAULT_OPTION_SOURCE) -> list[ScoredOption]:
+    return pipeline.simulate(demo_data(), Settings(deadline_s=deadline_s, margin_s=margin_s, mpg=mpg,
+                                                   source=source))
 
 
 def hhmm(t) -> str:
@@ -177,14 +179,20 @@ with st.sidebar:
     margin_min = st.number_input("Safety margin (min)", min_value=0, max_value=30,
                                  value=config.SAFETY_MARGIN_S // 60, step=1)
     mpg = st.number_input("Car fuel economy (mpg)", min_value=5.0, value=config.DEFAULT_MPG, step=1.0)
+    source = st.radio("Options from", config.OPTION_SOURCES,
+                      index=config.OPTION_SOURCES.index(config.DEFAULT_OPTION_SOURCE),
+                      format_func=lambda s: {"router": "Router (RAPTOR)",
+                                             "safety_net": "Safety net (hard-coded)"}[s],
+                      horizontal=True)
     st.caption(f"Scenario: Tue {config.DEMO_SERVICE_DATE:%m-%d}, regular weekday, origin = {origin_label()}, "
                "destination = NY Penn.")
     st.caption(f"Monte Carlo: N = {config.N_SAMPLES}, seed {config.DEFAULT_SEED}.")
 
 settings = Settings(deadline_s=deadline.hour * 3600 + deadline.minute * 60, vot_usd_per_h=vot,
-                    hard_penalty_usd=penalty, margin_s=int(margin_min) * 60, mpg=mpg)
+                    hard_penalty_usd=penalty, margin_s=int(margin_min) * 60, mpg=mpg, source=source)
 data = demo_data()
-scored = reprice(simulate(settings.deadline_s, settings.margin_s, settings.mpg), settings, data.inputs)
+scored = reprice(simulate(settings.deadline_s, settings.margin_s, settings.mpg, settings.source), settings,
+                 data.inputs)
 
 # --- Main view ---------------------------------------------------------------
 st.title("Crossing: Chatham-area commute to NY Penn")
@@ -269,7 +277,7 @@ fmt = lambda o: f"{o[0]} on train {o[1]}" if o else "—"  # noqa: E731
 st.write(f"With these settings the top option **{'changes' if risk != sched else 'does not change'}** when "
          f"risk is priced in: {fmt(risk)} vs schedule-only {fmt(sched)}.")
 
-sw = pipeline.sweep(data, settings, simulate_fn=lambda x: simulate(x.deadline_s, x.margin_s, x.mpg))
+sw = pipeline.sweep(data, settings, simulate_fn=lambda x: simulate(x.deadline_s, x.margin_s, x.mpg, x.source))
 st.markdown("**Sweep** (current deadline, VOT and mpg; leave-home re-planned per margin; same code as "
             "eval/core_claim.md)")
 st.dataframe(sw.drop(columns=["p_on_time"]).rename(columns={
@@ -281,5 +289,5 @@ st.caption("Exposure: the Portal bridges matter only while the final cutover (Oc
            "tunnels open, planned for the 2030s.")
 st.caption("Caveats: about one weekday of AM-peak data; the M&E → HB population is 7 runs (boarding delay "
            "zero-filled where the boarding stop was not observed); PATH runs to schedule (not measured); "
-           "cancelled runs are invisible; the NY delay measure is provisional (check A).")
+           "cancelled runs are invisible; NY delay = SEC_LATE (the feed's NY time includes a terminal dwell, check A).")
 st.caption(f"Build {pipeline.build_stamp()} · N = {config.N_SAMPLES}, seed {config.DEFAULT_SEED}.")

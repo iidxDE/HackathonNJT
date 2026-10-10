@@ -127,7 +127,9 @@ POOL_MIN_RUNS = 5
 # Weekend service is a separate robustness set (CLAUDE.md §6), not pooled.
 POOL_WEEKDAYS_ONLY = True
 
-# Delay measure per stop (check A, 10-10, PROVISIONAL). At FEED_DELAY_STOPS,
+# Delay measure per stop (check A, 10-10; confirmed: NJT getStationSchedule has
+# DWELL_TIME = 780 at NY on exactly the offset runs, so the feed's NY time is
+# arrival + terminal dwell and SEC_LATE is the arrival delay). At FEED_DELAY_STOPS,
 # 26 of 206 NY-terminating runs carry a feed schedule exactly 780 s later than
 # GTFS, so delay_vs_gtfs_s jumps ~+766 s (median) from the previous stop while
 # SEC_LATE moves ~+2 s. "feed": use delay_s (SEC_LATE) at those stops and
@@ -155,9 +157,44 @@ PATH_ASSUMED_HEADWAY_S = 10 * 60
 TRANSFER_MIN_S: dict[str, int] = {
     "hoboken_njt_to_path": 5 * 60,
     "path_33st_to_penn_walk": 4 * 60,
-    "secaucus_same_system": 6 * 60,
+    "secaucus_same_system": 5 * 60,  # SE <-> TS (Phase 2 decision, transfers.csv)
     "newark_penn_njt_path": 5 * 60,
 }
+
+# --- Router network (Phase 2.1) -----------------------------------------------
+# Cached RAPTOR arrays per service date; transfers.csv is the single transfer source.
+NETWORK_NPZ_TEMPLATE = "network_{ymd}.npz"  # under ARTIFACTS_DIR
+NETWORK_REPORT_MD = REPO_ROOT / "eval" / "network_report.md"
+ROUTER_DEST_STOP = "DEST:NYP"  # virtual NY Penn target (NJT:NY + 0, PATH:33rd Street + walk)
+ROUTER_VIRTUAL_PREFIXES: tuple[str, ...] = ("DEST:",)
+# Portal cutover check: on DEMO_SERVICE_DATE no trip of these NJT routes may
+# serve NY Penn (M&E 7, Gladstone 8, Montclair-Boonton 2 / 3 end at Hoboken).
+CUTOVER_HOBOKEN_ROUTE_IDS: tuple[str, ...] = ("7", "8", "2", "3")
+
+# --- Router (Phase 2.2, range RAPTOR per access station) ---------------------
+ROUTER_MAX_ROUNDS = 3  # K: rides searched
+ROUTER_MAX_RIDES_OUT = 2  # journeys with more rides are logged, not passed on
+ROUTER_WINDOW_BEFORE_S = 150 * 60  # departures from deadline − this ...
+# ... to deadline + ROUTER_DEPART_AFTER_S, arrivals ≤ deadline + ROUTER_ARRIVE_AFTER_S.
+# Catch-next needs trains after the deadline; a train arriving later than the
+# scorer's late cap is worth no more than the censored value, so both = LATE_CAP_MIN.
+ROUTER_ARRIVE_AFTER_S = LATE_CAP_MIN * 60
+ROUTER_DEPART_AFTER_S = LATE_CAP_MIN * 60
+ROUTER_MODE_BY_FEED: dict[str, str] = {"NJT": "rail", "PATH": "path"}
+# Adapter (2.3): router stop ids → Leg stop ids. NJT:<code> → <code>; PATH stays
+# "PATH:<stop_name>"; the virtual target → DESTINATION_STATION.
+ROUTER_NJT_PREFIX = "NJT:"
+# Stations the router plans for: those with a drive destination and a station buffer.
+ROUTER_ACCESS_STATIONS: tuple[str, ...] = ("CM", "ST", "RT", "SE", "NP")
+# Where candidate options come from: "router" (RAPTOR, 2.3) or "safety_net"
+# (hard-coded station_options, kept as the regression reference).
+OPTION_SOURCES: tuple[str, ...] = ("router", "safety_net")
+DEFAULT_OPTION_SOURCE = "router"  # 2.4 gate: GO (eval/router_validation.md)
+
+
+def network_npz(service_date: date) -> Path:
+    return ARTIFACTS_DIR / NETWORK_NPZ_TEMPLATE.format(ymd=service_date.strftime("%Y%m%d"))
+
 
 # --- Safety-net candidates (1.3; estimates, flagged in the UI) ---------------
 SAFETY_MARGIN_S = 5 * 60  # slack between parking and the station buffer

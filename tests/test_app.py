@@ -33,3 +33,17 @@ def test_demo_preset_renders_offline():
     at.run()
     assert np_train() == "3926"
     assert any("top option" in m.value for m in at.markdown)  # claim panel
+
+
+@needs_data
+@pytest.mark.skipif(not config.network_npz(config.DEMO_SERVICE_DATE).exists(), reason="network not built")
+def test_router_is_default_and_matches_safety_net():
+    from streamlit.testing.v1 import AppTest
+
+    at = AppTest.from_file(str(config.REPO_ROOT / "app" / "app.py"), default_timeout=120)
+    at.run()
+    assert not at.exception and at.radio[0].value == "router"
+    best_router = at.subheader[0].value
+    at.radio[0].set_value("safety_net")
+    at.run()
+    assert not at.exception and at.subheader[0].value == best_router

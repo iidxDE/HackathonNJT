@@ -53,7 +53,10 @@ python -m src.build.drive_cache           # network: fills missing Routes API ca
 
 ```bash
 python -m src.safety_net --deadline 09:00   # candidates, costs, exposure
-python -m src.scoring                       # ranked table + core-claim sweep → eval/core_claim.md
+python -m src.build.network                 # router network (NJT rail + PATH, 10-13) → eval/network_report.md
+python -m src.scoring --source router       # ranked table + sweep from router options → eval/core_claim_router.md
+python -m src.scoring --source safety_net   # same from hard-coded options → eval/core_claim.md (regression)
+python -m src.routing.validate              # router vs hard-coded options + gate → eval/router_validation.md
 python -m pytest tests -q
 ```
 
@@ -61,4 +64,4 @@ python -m pytest tests -q
 
 About one weekday of observed delays (Fri 10-09 AM peak); Chatham → Hoboken has 5 effective runs.
 PATH delays are not measured (scheduled times). Drive-time spread comes from Google's traffic
-models, not observation. Prices are dated snapshots. The NY delay measure is provisional (check A).
+models, not observation. Prices are dated snapshots. The NY delay measure uses SEC_LATE (check A: the feed's NY time includes a 13-min terminal dwell).

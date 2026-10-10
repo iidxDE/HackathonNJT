@@ -135,3 +135,42 @@ def test_ranking_rules(inputs):
     assert scored["Drive all the way (not priced)"].rank is None  # reference row
     assert scored["late SE"].rank == max(s.rank for s in scored.values() if s.rank)  # infeasible last
     assert {scored["SE → NY"].rank, scored["CM → HB + PATH"].rank} == {1, 2}
+
+
+def _rail(frm, to, dep_s, arr_s, train):
+    from src.contracts import Leg, LegMode
+    return Leg(LegMode.RAIL, frm, to, to_utc(TUE, dep_s), to_utc(TUE, arr_s), train_number=train,
+               gtfs_line="10", direction=0, toward_ny=True)
+
+
+def rail_rail_candidate():
+    """NP → SE (mid-trip alight) on 901, then SE → NY on 902 (08:11) or 903 (08:25)."""
+    from src.contracts import Candidate, Leg, LegMode
+    h8 = 8 * 3600
+    r1 = _rail("NP", "SE", h8, h8 + 600, "901")
+    a = _rail("SE", "NY", h8 + 660, h8 + 1380, "902")
+    b = _rail("SE", "NY", h8 + 1500, h8 + 2220, "903")
+    leave = to_utc(TUE, 7 * 3600)
+    drive = Leg(LegMode.DRIVE, "ORIGIN", "LOT:SE", leave, to_utc(TUE, 7 * 3600 + 1800))
+    walk = Leg(LegMode.WALK, "LOT:SE", "NP", to_utc(TUE, 7 * 3600 + 1800), r1.sched_dep)
+    return Candidate("NP", (drive, walk, r1, a), money(10.0), None, "router",
+                     catch_next=((r1, a), (r1, b)), leave_home=leave, label="NP → SE → NY")
+
+
+def test_rail_to_rail_nested_catch_next(inputs):
+    s = Settings(deadline_s=DEADLINE_S, n=500)
+    c = rail_rail_candidate()
+    # Same-stop minimum 5 min: SE arrival 08:10 + 0..150 s + 300 s misses 902 (08:11 + ≤ 150 s) → 903.
+    strict = score_all([c], inputs, s)[0]
+    assert pd.Timestamp(strict.arrival_p50) >= pd.Timestamp(to_utc(TUE, 8 * 3600 + 2220))
+    assert "intermediate_alight" in strict.flags
+    assert {u.train_number for u in strict.pools} >= {"901"}
+    assert any(u.intermediate_alight for u in strict.pools if u.train_number == "901")
+    # No transfer minimum: 902 is often catchable → earlier median arrival.
+    loose = score_all([c], replace(inputs, same_stop_transfer_s=0), s)[0]
+    assert pd.Timestamp(loose.arrival_p50) < pd.Timestamp(to_utc(TUE, 8 * 3600 + 2220))
+
+
+def test_can_board_rule():
+    from src.scoring.scorer import can_board
+    assert can_board(100, 100) and not can_board(101, 100) and can_board(101, 100, 1)

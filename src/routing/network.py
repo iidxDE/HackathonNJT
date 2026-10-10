@@ -26,6 +26,7 @@ from src import gtfs
 # GTFS pickup_type / drop_off_type: 0 or empty = allowed, 1 = not available,
 # 2/3 = phone / coordinate with driver (treated as allowed).
 _NOT_AVAILABLE = "1"
+SECONDS_PER_DAY = 86_400
 
 
 @dataclass(frozen=True)
@@ -43,6 +44,7 @@ class FeedTimetable:
     trips: pd.DataFrame  # trip, route_id, label, service_id
     stop_map: pd.DataFrame  # raw stop_id → stop (namespaced station key)
     n_active_services: int
+    n_wrapped_trips: int = 0  # trips whose clock restarted at 00:00 mid-trip (fixed)
 
 
 def collapse_stops(stops: pd.DataFrame, prefix: str, stop_key: str) -> pd.Series:
@@ -66,11 +68,39 @@ def strip_label(label: pd.Series) -> pd.Series:
     return out.where(out != "", label.str.strip())
 
 
+def unwrap_midnight(st: pd.DataFrame) -> tuple[pd.DataFrame, int]:
+    """Make times non-decreasing within each trip; return (stop_times, trips fixed).
+
+    Some feeds write after-midnight times as 00:12 instead of 24:12. A drop of
+    more than 12 h from the previous time in the same trip adds 24 h to the
+    rest of the trip. Rows must be sorted by (trip, seq). Raises if any trip
+    still runs backwards afterwards.
+    """
+    half = SECONDS_PER_DAY // 2
+    st = st.copy()
+    # Interleave arr0, dep0, arr1, dep1, ... per trip; a drop > 12 h starts a new day.
+    flat = np.column_stack([st["arr_s"].to_numpy(), st["dep_s"].to_numpy()]).ravel()
+    trip = np.repeat(st["trip"].to_numpy(), 2)
+    same = np.r_[False, trip[1:] == trip[:-1]]
+    drop = same & (flat < np.r_[0, flat[:-1]] - half)
+    cum = np.cumsum(drop)
+    first = np.r_[True, ~same[1:]]
+    wraps = cum - np.maximum.accumulate(np.where(first, cum - drop, 0))
+    flat = flat + wraps * SECONDS_PER_DAY
+    st["arr_s"], st["dep_s"] = flat[0::2], flat[1::2]
+    fixed = int(len(set(trip[drop])))
+    back = (st["dep_s"] < st["arr_s"]) | (st["arr_s"] < st.groupby("trip")["dep_s"].shift().fillna(-1))
+    if back.any():
+        raise ValueError(f"{back.sum()} stop_times run backwards in time, "
+                         f"e.g. trip {st.loc[back, 'trip'].iloc[0]}")
+    return st, fixed
+
+
 def load_timetable(spec: FeedSpec, service_date: date) -> FeedTimetable:
     """Active trips of one feed on service_date as namespaced stop_times.
 
     Trips without a trip_short_name get a synthetic label
-    "<route_short_name or route_id>@HH:MM" (first departure), suffixed on clash.
+    "<route_short_name or route_id>@HH:MM <first stop>", suffixed "#n" on clash.
     """
     feed = gtfs.load_feed(spec.feed_dir)
     services = gtfs.active_service_ids(feed, service_date)
@@ -94,8 +124,10 @@ def load_timetable(spec: FeedSpec, service_date: date) -> FeedTimetable:
     if out["stop"].isna().any():
         raise ValueError(f"{spec.prefix}: stop_times reference stops missing from stops.txt")
     out = out.sort_values(["trip", "seq"], kind="stable").reset_index(drop=True)
+    out, n_wrapped = unwrap_midnight(out)
 
     first_dep = out.groupby("trip")["dep_s"].first()
+    first_stop = out.groupby("trip")["stop"].first().str.split(":", n=1).str[1]
     trips["trip"] = spec.prefix + ":" + trips["trip_id"]
     short = trips.get("trip_short_name", pd.Series("", index=trips.index))
     rname = trips["route_id"].map(feed.routes.set_index("route_id").get(
@@ -103,7 +135,8 @@ def load_timetable(spec: FeedSpec, service_date: date) -> FeedTimetable:
     rname = rname.where(rname != "", trips["route_id"])
     dep = trips["trip"].map(first_dep)
     synthetic = (rname + "@" + (dep // 3600).astype(int).map("{:02d}".format)
-                 + ":" + (dep % 3600 // 60).astype(int).map("{:02d}".format))
+                 + ":" + (dep % 3600 // 60).astype(int).map("{:02d}".format)
+                 + " " + trips["trip"].map(first_stop))
     has_short = short.str.strip() != ""
     label = strip_label(short).where(has_short, synthetic)
     dup = label.groupby(label).cumcount()
@@ -112,7 +145,7 @@ def load_timetable(spec: FeedSpec, service_date: date) -> FeedTimetable:
                               "label": label, "synthetic_label": ~has_short,
                               "service_id": trips["service_id"]}).reset_index(drop=True)
     sm = stop_map.rename("stop").rename_axis("stop_id").reset_index()
-    return FeedTimetable(spec.prefix, out, trips_out, sm, len(services))
+    return FeedTimetable(spec.prefix, out, trips_out, sm, len(services), n_wrapped)
 
 
 @dataclass

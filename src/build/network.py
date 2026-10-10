@@ -53,8 +53,9 @@ def build(service_date: date = config.DEMO_SERVICE_DATE) -> tuple[Network, str]:
     njt = load_timetable(NJT, service_date)
     path = load_timetable(PATH, service_date)
     for tt in (njt, path):
-        log.info("%s: %d active services, %d trips, %d stop_times", tt.prefix,
-                 tt.n_active_services, len(tt.trips), len(tt.stop_times))
+        log.info("%s: %d active services, %d trips, %d stop_times, %d midnight wraps fixed",
+                 tt.prefix, tt.n_active_services, len(tt.trips), len(tt.stop_times),
+                 tt.n_wrapped_trips)
         _check(len(tt.trips) >= 1, f"{tt.prefix}: no active trip on {service_date}")
 
     # Scope stations: NJT stop_code → station, mapped once.
@@ -129,6 +130,7 @@ def report(net: Network, njt, path, transfers, service_date: date) -> str:
             "patterns (before split)": net.stats["patterns_before_split"].get(tt.prefix, 0),
             "FIFO splits": net.stats["fifo_splits"].get(tt.prefix, 0),
             "patterns": int(sum(r.startswith(tt.prefix + ":") for r in net.pattern_route)),
+            "midnight wraps fixed": tt.n_wrapped_trips,
             "trips past 24:00": int((st.groupby("trip")["arr_s"].max() >= config.SECONDS_PER_DAY).sum()),
             "max time": f"{int(st['arr_s'].max()) // 3600:02d}:{int(st['arr_s'].max()) % 3600 // 60:02d}",
         })
@@ -162,6 +164,8 @@ def report(net: Network, njt, path, transfers, service_date: date) -> str:
         "- ≥ 1 active trip in each feed.",
         f"- Portal cutover: no trip of NJT routes {', '.join(config.CUTOVER_HOBOKEN_ROUTE_IDS)} "
         "(M&E, Gladstone, Montclair-Boonton) serves NJT:NY.",
+        "- Times never decrease within a trip (after un-wrapping times written as 00:xx "
+        "instead of 24:xx past midnight; count per feed above).",
         "- Every pattern is FIFO after splitting.",
         "- Every transfers.csv stop exists after the parent collapse (`DEST:` stops are virtual); "
         "every `stations_scope.csv` station maps to an NJT stop; NJT stop_code unique.",
@@ -188,7 +192,7 @@ def report(net: Network, njt, path, transfers, service_date: date) -> str:
         "## NJT trips with no trip_short_name",
         "",
         f"{len(no_name)}" + (": " + ", ".join(no_name["trip"]) if len(no_name) else "."),
-        "PATH trips get a synthetic label `<route_short_name>@HH:MM` (first departure).",
+        "PATH trips get a synthetic label `<route_short_name>@HH:MM <first stop>` (first departure).",
         "",
         "## Transfers (`data/reference/transfers.csv`, source = estimate on every row)",
         "",

@@ -171,6 +171,13 @@ ROUTER_VIRTUAL_PREFIXES: tuple[str, ...] = ("DEST:",)
 # serve NY Penn (M&E 7, Gladstone 8, Montclair-Boonton 2 / 3 end at Hoboken).
 CUTOVER_HOBOKEN_ROUTE_IDS: tuple[str, ...] = ("7", "8", "2", "3")
 
+# --- Router (Phase 2.2, range RAPTOR per access station) ---------------------
+ROUTER_MAX_ROUNDS = 3  # K: rides searched
+ROUTER_MAX_RIDES_OUT = 2  # journeys with more rides are logged, not passed on
+ROUTER_WINDOW_BEFORE_S = 150 * 60  # departures in [deadline − this, deadline]
+ROUTER_ARRIVE_AFTER_S = 30 * 60  # keep arrivals ≤ deadline + this (catch-next)
+ROUTER_MODE_BY_FEED: dict[str, str] = {"NJT": "rail", "PATH": "path"}
+
 
 def network_npz(service_date: date) -> Path:
     return ARTIFACTS_DIR / NETWORK_NPZ_TEMPLATE.format(ymd=service_date.strftime("%Y%m%d"))

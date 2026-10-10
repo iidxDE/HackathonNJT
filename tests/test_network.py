@@ -61,7 +61,7 @@ def test_loader_rules(toy_feed):
     assert set(tt.stop_times["stop"]) == {"X:AA", "X:BB", "X:CC"}  # A1 → parent A
     assert tt.stop_times["arr_s"].max() == 24 * 3600 + 50 * 60
     labels = dict(zip(tt.trips["trip"], tt.trips["label"]))
-    assert labels["X:t1"] == "100" and labels["X:t3"] == "RED@24:10"
+    assert labels["X:t1"] == "100" and labels["X:t3"] == "RED@24:10 AA"
     b = tt.stop_times[(tt.stop_times["trip"] == "X:t1") & (tt.stop_times["stop"] == "X:BB")]
     assert not b["alight_ok"].item() and b["board_ok"].item()
 
@@ -117,3 +117,17 @@ def test_demo_network_build():
     assert "All build asserts passed" in md
     t = load_transfers(config.TRANSFERS_CSV)
     assert t.same_stop_s == config.TRANSFER_MIN_S["hoboken_njt_to_path"]
+
+
+def test_unwrap_midnight():
+    from src.routing.network import unwrap_midnight
+    h = 3600
+    st = pd.DataFrame({"trip": ["p"] * 4 + ["q"] * 2,
+                       "arr_s": [23 * h + 3300, 23 * h + 3582, 72, 630, 0, 600],
+                       "dep_s": [23 * h + 3300, 0, 90, 630, 0, 600]})  # wraps between arr and dep
+    out, fixed = unwrap_midnight(st)
+    day = 86_400
+    assert out["dep_s"].tolist()[:4] == [23 * h + 3300, day, day + 90, day + 630]
+    assert out["arr_s"].tolist()[4:] == [0, 600] and fixed == 1  # q untouched
+    with pytest.raises(ValueError, match="backwards"):
+        unwrap_midnight(pd.DataFrame({"trip": ["r", "r"], "arr_s": [600, 300], "dep_s": [600, 300]}))

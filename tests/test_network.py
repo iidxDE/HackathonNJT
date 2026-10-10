@@ -89,6 +89,9 @@ def test_save_load_roundtrip(toy_feed, tmp_path):
     back = Network.load(p)
     assert back.service_date == "20261013" and back.same_stop_transfer_s == 300
     assert np.array_equal(back.arr, net.arr) and list(back.trip_labels) == list(net.trip_labels)
+    assert back.trip_direction.tolist() == [-1] * len(net.trip_ids)  # toy feed has no direction_id
+    g, p = back.trip_index()["X:t1"]
+    assert back.terminal_of_pattern(p) == "X:CC"
 
 
 def test_unknown_transfer_stop_fails(toy_feed):

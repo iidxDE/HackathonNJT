@@ -318,6 +318,7 @@ class PoolUsage:
     delay_field_at_stop: Mapping[str, DelayField]
     train_number: str | None = None  # set by the scorer, which knows the leg
     board_zero_share: float = 0.0
+    intermediate_alight: bool = False  # leg alights before its trip's terminal (period approximated)
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "delay_field_at_stop", dict(self.delay_field_at_stop))

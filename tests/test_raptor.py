@@ -59,7 +59,7 @@ d1,08:40:00,08:40:00,C,2,0,0
 def _toy(net, access, deadline="08:30", **kw):
     return route_profile(net, access, D, _hm(deadline), target="DEST:Z",
                          mode_by_feed={"X": "rail"}, window_before_s=3600,
-                         arrive_after_s=3600, **kw)
+                         arrive_after_s=3600, depart_after_s=0, **kw)
 
 
 def test_toy_transfer_minimum_and_pareto(toy_net):
@@ -180,7 +180,7 @@ def test_profile_pareto_window_and_runtime(demo_net, access):
     dl = config.DEMO_DEADLINE_S
     for j in js:
         assert j.rides <= config.ROUTER_MAX_RIDES_OUT
-        assert dl - config.ROUTER_WINDOW_BEFORE_S <= j.dep_time <= dl
+        assert dl - config.ROUTER_WINDOW_BEFORE_S <= j.dep_time <= dl + config.ROUTER_DEPART_AFTER_S
         assert j.arr_time <= dl + config.ROUTER_ARRIVE_AFTER_S
         assert j.legs[-1].alight_stop == config.ROUTER_DEST_STOP
         for a, b in zip(j.legs, j.legs[1:]):

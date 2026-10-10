@@ -118,12 +118,13 @@ def route_profile(network: Network, access_stop: str, service_date: date, deadli
                   max_rides_out: int = config.ROUTER_MAX_RIDES_OUT,
                   window_before_s: int = config.ROUTER_WINDOW_BEFORE_S,
                   arrive_after_s: int = config.ROUTER_ARRIVE_AFTER_S,
+                  depart_after_s: int = config.ROUTER_DEPART_AFTER_S,
                   mode_by_feed: Mapping[str, str] = config.ROUTER_MODE_BY_FEED,
                   stats: ProfileStats | None = None) -> list[Journey]:
     """Pareto profile of journeys access_stop → target.
 
     Departures from access_stop (or from a stop one footpath away, counted from
-    the access stop) in [deadline − window_before_s, deadline]; journeys
+    the access stop) in [deadline − window_before_s, deadline + depart_after_s]; journeys
     arriving at target ≤ deadline + arrive_after_s. Returns journeys with
     rides ≤ max_rides_out, sorted by departure; longer ones are counted in
     stats.dropped_rides and logged. Same-stop transfers use the network's
@@ -137,7 +138,7 @@ def route_profile(network: Network, access_stop: str, service_date: date, deadli
     src, tgt = pr.sidx[access_stop], pr.sidx[target]
     n, K = network.n_stops, max_rounds
     xfer = int(network.same_stop_transfer_s)
-    t_lo, t_hi = deadline - window_before_s, deadline
+    t_lo, t_hi = deadline - window_before_s, deadline + depart_after_s
     limit = deadline + arrive_after_s + 1  # strict upper bound on any useful arrival
 
     # Departure times (from the access stop) within the window, latest first.

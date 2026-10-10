@@ -141,7 +141,10 @@ def load_timetable(spec: FeedSpec, service_date: date) -> FeedTimetable:
     label = strip_label(short).where(has_short, synthetic)
     dup = label.groupby(label).cumcount()
     label = label.where((dup == 0) | has_short, label + "#" + dup.astype(str))
+    direction = pd.to_numeric(trips.get("direction_id", pd.Series("", index=trips.index)),
+                              errors="coerce").fillna(-1).astype(int)
     trips_out = pd.DataFrame({"trip": trips["trip"], "route_id": trips["route_id"].astype(str),
+                              "direction_id": direction,
                               "label": label, "synthetic_label": ~has_short,
                               "service_id": trips["service_id"]}).reset_index(drop=True)
     sm = stop_map.rename("stop").rename_axis("stop_id").reset_index()
@@ -166,6 +169,8 @@ class Network:
     pattern_route: np.ndarray  # str, namespaced route id
     trip_ids: np.ndarray  # str, namespaced
     trip_labels: np.ndarray  # str (train number or synthetic)
+    trip_direction: np.ndarray  # int16 GTFS direction_id, -1 if absent
+    trip_synthetic: np.ndarray  # bool: no trip_short_name, label is synthetic
     tt_ptr: np.ndarray
     arr: np.ndarray  # int32 seconds
     dep: np.ndarray
@@ -181,7 +186,7 @@ class Network:
     stats: dict = field(default_factory=dict)
 
     _ARRAYS = ("stop_ids", "pattern_stops", "ps_ptr", "pt_ptr", "pattern_route", "trip_ids",
-               "trip_labels", "tt_ptr", "arr", "dep", "board_ok", "alight_ok", "sp_ptr",
+               "trip_labels", "trip_direction", "trip_synthetic", "tt_ptr", "arr", "dep", "board_ok", "alight_ok", "sp_ptr",
                "sp_pattern", "sp_pos", "tr_from", "tr_to", "tr_min_s")
 
     @property
@@ -194,6 +199,18 @@ class Network:
 
     def stop_index(self) -> dict[str, int]:
         return {s: i for i, s in enumerate(self.stop_ids)}
+
+    def trip_index(self) -> dict[str, tuple[int, int]]:
+        """Namespaced trip_id → (global trip row, pattern). The pattern's last stop is
+        the trip's terminal (a pattern is the trip's full stop sequence)."""
+        out = {}
+        for p in range(self.n_patterns):
+            for g in range(int(self.pt_ptr[p]), int(self.pt_ptr[p + 1])):
+                out[str(self.trip_ids[g])] = (g, p)
+        return out
+
+    def terminal_of_pattern(self, p: int) -> str:
+        return str(self.stop_ids[self.pattern_stops[self.ps_ptr[p + 1] - 1]])
 
     def pattern_times(self, p: int, which: str = "dep") -> np.ndarray:
         """trips × stops matrix of arr or dep for pattern p."""
@@ -292,7 +309,7 @@ def build_network(timetables: list[FeedTimetable], transfers: Transfers, service
     by_trip = {k: g for k, g in st.groupby("trip", sort=False)}
 
     pattern_stops, ps_ptr, pt_ptr, proute = [], [0], [0], []
-    trip_ids, labels, tt_ptr = [], [], [0]
+    trip_ids, labels, dirs, synth, tt_ptr = [], [], [], [], [0]
     arr_l, dep_l, bo_l, al_l = [], [], [], []
     n_split = 0
     split_by_feed: dict[str, int] = {}
@@ -315,6 +332,8 @@ def build_network(timetables: list[FeedTimetable], transfers: Transfers, service
                 r = rows[i]
                 trip_ids.append(g.index[i])
                 labels.append(trips.at[g.index[i], "label"])
+                dirs.append(int(trips.at[g.index[i], "direction_id"]))
+                synth.append(bool(trips.at[g.index[i], "synthetic_label"]))
                 arr_l.append(r["arr_s"].to_numpy())
                 dep_l.append(r["dep_s"].to_numpy())
                 bo_l.append(r["board_ok"].to_numpy())
@@ -341,6 +360,7 @@ def build_network(timetables: list[FeedTimetable], transfers: Transfers, service
         pt_ptr=np.array(pt_ptr, dtype=np.int64),
         pattern_route=np.array(proute),
         trip_ids=np.array(trip_ids), trip_labels=np.array(labels),
+        trip_direction=np.array(dirs, dtype=np.int16), trip_synthetic=np.array(synth, dtype=bool),
         tt_ptr=np.array(tt_ptr, dtype=np.int64),
         arr=np.concatenate(arr_l).astype(np.int32), dep=np.concatenate(dep_l).astype(np.int32),
         board_ok=np.concatenate(bo_l), alight_ok=np.concatenate(al_l),

@@ -20,6 +20,8 @@ from src.contracts import ScoredOption
 from src.gtfs import GtfsFeed, load_feed, stop_pairs
 from src.pricing.exposure import InfraIndex, index_infra, load_infra, tag_candidate
 from src.pricing.pricer import PriceTables, load_price_tables, price_candidate
+from src.routing.adapter import router_options
+from src.routing.network import Network, load_transfers
 from src.safety_net.candidates import Option, build_candidates, station_options, to_utc
 from src.scoring.drive import index_drive_cache, load_drive_cache, lookup
 from src.scoring.pools import index_pools, load_pools
@@ -34,6 +36,17 @@ class DemoData:
     infra: InfraIndex
     inputs: ScoringInputs  # pools / drive cache as pre-built indexes
     options: dict[str, list[Option]]  # station_options for the service date
+    network: Network | None = None  # router network (None if not built)
+
+    def options_for(self, settings: Settings) -> dict[str, list[Option]]:
+        """Hard-coded options, or router options for this deadline (cached on the network)."""
+        if settings.source == "safety_net":
+            return self.options
+        if settings.source != "router":
+            raise ValueError(f"unknown option source {settings.source!r}")
+        if self.network is None:
+            raise FileNotFoundError("router network not built: python -m src.build.network")
+        return router_options(self.network, self.inputs.service_date, settings.deadline_s)
 
     @property
     def route_names(self) -> dict[str, str]:
@@ -50,17 +63,21 @@ def path_schedule(path: GtfsFeed, service_date) -> np.ndarray:
 
 def load_demo_data(service_date=config.DEMO_SERVICE_DATE) -> DemoData:
     njt, path = load_feed(config.GTFS_NJT_RAIL_DIR), load_feed(config.GTFS_PATH_DIR)
+    same_stop = (load_transfers(config.TRANSFERS_CSV).same_stop_s if config.TRANSFERS_CSV.exists()
+                 else config.TRANSFER_MIN_S["hoboken_njt_to_path"])
     inputs = ScoringInputs(index_pools(load_pools()), index_drive_cache(load_drive_cache()),
-                           path_schedule(path, service_date), service_date)
+                           path_schedule(path, service_date), service_date, same_stop)
+    npz = config.network_npz(service_date)
     return DemoData(njt, path, load_price_tables(), index_infra(load_infra()), inputs,
-                    station_options(njt, path, service_date))
+                    station_options(njt, path, service_date),
+                    Network.load(npz) if npz.exists() else None)
 
 
 def simulate(data: DemoData, settings: Settings) -> list[ScoredOption]:
     cache = data.inputs.drive_cache
     cands = build_candidates(None, None, lambda dest, t: lookup(cache, dest, t).best_guess_s,
                              data.inputs.service_date, settings.deadline_s, settings.margin_s,
-                             options=data.options)
+                             options=data.options_for(settings), source=settings.source)
     cands = [tag_candidate(price_candidate(c, data.tables, cache, settings.mpg), data.infra,
                            data.route_names) for c in cands]
     return score_all(cands, data.inputs, settings)

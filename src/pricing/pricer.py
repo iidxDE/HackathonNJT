@@ -200,14 +200,16 @@ def price_candidate(c: Candidate, tables: PriceTables, drive_cache: DriveCache,
         return replace(c, costs=costs)
 
     rail = c.planned_train
-    origin, dest = (rail.from_stop, rail.to_stop) if rail else (c.access_station, config.DESTINATION_STATION)
+    rails = [leg for leg in c.legs if leg.mode is LegMode.RAIL]
+    last = rails[-1] if rails else None  # fare is O–D: first rail boarding → last rail alighting
+    origin, dest = (rail.from_stop, last.to_stop) if rail else (c.access_station, config.DESTINATION_STATION)
     uses_path = any(leg.mode is LegMode.PATH for leg in c.legs)
     park_hhmm = (pd.Timestamp(c.legs[0].sched_arr).tz_convert(config.LOCAL_TZ).strftime("%H:%M")
                  if c.legs and c.legs[0].mode is LegMode.DRIVE else None)
     parking, flags = parking_item(tables, c.access_station, resident, park_hhmm)
     tolls, fuel = drive_items(tables, drive_cache, c, mpg)
     costs = CostBreakdown(fare=fare_item(tables, origin, dest), parking=parking, tolls=tolls, fuel=fuel,
-                          path_fare=path_fare_item(tables, _local_date(rail), rail.gtfs_line if rail else None,
-                                                   rail.to_stop if rail else None)
+                          path_fare=path_fare_item(tables, _local_date(rail), last.gtfs_line if last else None,
+                                                   last.to_stop if last else None)
                           if uses_path else None, flags=flags)
     return replace(c, costs=costs)

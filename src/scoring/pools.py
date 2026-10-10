@@ -5,8 +5,9 @@ draws whole runs uniformly with replacement, so a run's boarding and
 alighting delays always come from the same historical run. Fallback, first
 level whose effective run count reaches min_runs:
 
-  L1 line × toward_ny × period   runs observed at BOTH stops
-  L2 toward_ny × period          runs observed at the alight stop; board delay = 0
+  L1  line × toward_ny × period  runs observed at BOTH stops
+  L1b line × toward_ny × period  runs observed at the alight stop; board delay = 0
+  L2  toward_ny × period         as L1b, all lines
   L3 toward_ny                   as L2, all periods
   L4 no data                     zeros (schedule baseline), run_count = 0
 
@@ -141,9 +142,13 @@ def _resolve(pools: pd.DataFrame | PoolIndex, board_stop: str, alight_stop: str,
                             {board_stop: _field(rows, board_stop), alight_stop: _field(rows, alight_stop)},
                             _ids(both.index))
 
-    for level, key in ((FallbackLevel.TOWARD_NY_PERIOD, PoolKey(None, toward_ny, period)),
-                       (FallbackLevel.TOWARD_NY, PoolKey(None, toward_ny, None))):
-        rows = _cell(pools, level, key)
+    # L1b keeps the line and drops the boarding-stop requirement: line identity matters
+    # more than boarding coverage (e.g. RT: most AM-peak M&E runs skip Short Hills).
+    for level, key, cell_level in (
+            (FallbackLevel.LINE_TOWARD_NY_PERIOD_ALIGHT, l1, FallbackLevel.LINE_TOWARD_NY_PERIOD),
+            (FallbackLevel.TOWARD_NY_PERIOD, PoolKey(None, toward_ny, period), FallbackLevel.TOWARD_NY_PERIOD),
+            (FallbackLevel.TOWARD_NY, PoolKey(None, toward_ny, None), FallbackLevel.TOWARD_NY)):
+        rows = _cell(pools, cell_level, key)
         alight = _runs_by_stop(rows, [alight_stop])[alight_stop].dropna()
         if len(alight) >= min_runs:
             delays = np.column_stack([np.zeros(len(alight)), alight.to_numpy(float)])
@@ -153,6 +158,24 @@ def _resolve(pools: pd.DataFrame | PoolIndex, board_stop: str, alight_stop: str,
 
     return ResolvedPool(FallbackLevel.NO_DATA, PoolKey(None, None, None), np.zeros((0, 2)),
                         {board_stop: DelayField.ASSUMED_ZERO, alight_stop: DelayField.ASSUMED_ZERO})
+
+
+def level_counts(pools: pd.DataFrame | PoolIndex, board_stop: str, alight_stop: str, line: str,
+                 toward_ny: bool, period: str) -> dict[FallbackLevel, int]:
+    """Effective run count at every fallback level for one leg (evidence / diagnostics)."""
+    l1_rows = _cell(pools, FallbackLevel.LINE_TOWARD_NY_PERIOD, PoolKey(line, toward_ny, period))
+    l2_rows = _cell(pools, FallbackLevel.TOWARD_NY_PERIOD, PoolKey(None, toward_ny, period))
+    l3_rows = _cell(pools, FallbackLevel.TOWARD_NY, PoolKey(None, toward_ny, None))
+
+    def alight_only(rows: pd.DataFrame) -> int:
+        return int(_runs_by_stop(rows, [alight_stop])[alight_stop].notna().sum())
+
+    return {
+        FallbackLevel.LINE_TOWARD_NY_PERIOD: len(_runs_by_stop(l1_rows, [board_stop, alight_stop]).dropna()),
+        FallbackLevel.LINE_TOWARD_NY_PERIOD_ALIGHT: alight_only(l1_rows),
+        FallbackLevel.TOWARD_NY_PERIOD: alight_only(l2_rows),
+        FallbackLevel.TOWARD_NY: alight_only(l3_rows),
+    }
 
 
 def sample(pools: pd.DataFrame | PoolIndex, board_stop: str, alight_stop: str, line: str,

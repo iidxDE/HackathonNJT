@@ -35,6 +35,7 @@ class FallbackLevel(str, Enum):
     """Delay pool granularity, finest first. Direction means toward_ny, not GTFS direction_id."""
 
     LINE_TOWARD_NY_PERIOD = "line_toward_ny_period"  # L1: runs observed at board AND alight
+    LINE_TOWARD_NY_PERIOD_ALIGHT = "line_toward_ny_period_alight"  # L1b: same cell, alight only; board = 0
     TOWARD_NY_PERIOD = "toward_ny_period"  # L2: runs observed at alight; board delay = 0
     TOWARD_NY = "toward_ny"  # L3: as L2, all periods
     NO_DATA = "no_data"  # L4: zero delays (schedule baseline); UI must warn

@@ -112,7 +112,8 @@ Do not add new dependencies without a clear reason. Prefer the standard library,
   - Do not pool by train number: the 10-12 timetable change moves start times by up to ±40 min.
 - **Fallback hierarchy**, first level with ≥ `config.POOL_MIN_RUNS` (5) effective runs:
   - L1 line × toward_ny × period: runs observed at **both** the leg's stops; (board, alight) drawn together.
-  - L2 toward_ny × period (all lines): runs observed at the alight stop; board delay = 0.
+  - L1b line × toward_ny × period: runs observed at the alight stop; board delay = 0. Line identity matters more than boarding-stop coverage, so the line is kept and the boarding-stop requirement is dropped first (RT: most AM-peak M&E runs run express past Short Hills).
+  - L2 toward_ny × period (all lines): as L1b.
   - L3 toward_ny (all periods): as L2.
   - L4 no data: zero delays (schedule baseline), run_count 0, UI warning.
   Record level, key, run count and delay field per stop in `PoolUsage`; the UI shows it as a confidence indicator.

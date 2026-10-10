@@ -109,3 +109,33 @@ def test_negative_delays_kept():
     samples, _ = sample(build_pools(observations(*runs)), "CM", "HB", "7", True, "am_peak",
                         5, np.random.default_rng(0))
     assert np.all(samples.delays_s == [-120, -60])
+
+
+def test_l1b_keeps_the_line_before_mixing_lines():
+    # Line 7: only 2 runs stop at RT, 6 runs reach HB. Line 5 (another line into HB) is faster.
+    runs = [obs_rows(f"7{i}", {"RT": (0, 30), "HB": (0, 240)}) for i in range(2)]
+    runs += [obs_rows(f"7x{i}", {"ST": (0, 30), "HB": (0, 240)}) for i in range(4)]
+    runs += [obs_rows(f"5{i}", {"SF": (0, 0), "HB": (0, 0)}, route="5") for i in range(20)]
+    pools = build_pools(observations(*runs))
+    samples, usage = sample(pools, "RT", "HB", "7", True, "am_peak", 200, np.random.default_rng(0))
+    assert usage.fallback_level is FallbackLevel.LINE_TOWARD_NY_PERIOD_ALIGHT
+    assert usage.pool_key == PoolKey("7", True, "am_peak") and usage.run_count == 6
+    assert np.all(samples.delays_s[:, 0] == 0) and np.all(samples.delays_s[:, 1] == 240)
+    assert usage.delay_field_at_stop["RT"] is DelayField.ASSUMED_ZERO
+
+
+def test_stop_coverage_diagnostic_classifies_missing_runs():
+    from src.build.pools import stop_coverage_diagnostic
+
+    t = lambda m: pd.Timestamp("2026-10-09T12:00Z") + pd.Timedelta(minutes=m)  # noqa: E731
+    obs = pd.DataFrame([
+        {"service_date": FRI, "train_number": n, "trip_id": f"t{n}", "stop_code": c, "observed_utc": t(m)}
+        for n in ("1", "2", "3", "4") for c, m in (("ST", 0), ("HB", 40))] +
+        [{"service_date": FRI, "train_number": "1", "trip_id": "t1", "stop_code": "RT", "observed_utc": t(5)}])
+    stop_codes = pd.DataFrame({"trip_id": ["t1", "t2", "t3", "t4"], "stop_code": "RT"})
+    raw = pd.DataFrame({"train_number": ["3", "4", "4", "2"], "next_stop_name": "Short Hills",
+                        "poll_utc": [t(5), t(6), t(7), t(500)]})  # train 2's record is another day
+    cleaned = raw[raw["train_number"] == "4"]
+    d = stop_coverage_diagnostic(obs, stop_codes, raw, cleaned, {"Short Hills"})
+    assert (d["population"], d["observed"], d["missing"]) == (4, 1, 3)
+    assert (d["no_next_stop_record"], d["dropped_by_cleaning"], d["stop_code_mismatch"]) == (1, 1, 1)

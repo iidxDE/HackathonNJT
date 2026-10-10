@@ -148,12 +148,24 @@ PATH_ASSUMED_HEADWAY_S = 10 * 60
 
 # --- Transfer minimums (seconds; assumptions until checked on site) ----------
 TRANSFER_MIN_S: dict[str, int] = {
-    "park_to_platform": 5 * 60,  # drive arrival → rail/PATH boarding, any station
     "hoboken_njt_to_path": 5 * 60,
-    "path_33st_to_penn_walk": 10 * 60,
+    "path_33st_to_penn_walk": 4 * 60,
     "secaucus_same_system": 6 * 60,
     "newark_penn_njt_path": 5 * 60,
 }
+
+# --- Safety-net candidates (1.3; estimates, flagged in the UI) ---------------
+SAFETY_MARGIN_S = 5 * 60  # slack between parking and the station buffer
+# Station buffer: park → platform. SE includes the garage and the upper level.
+STATION_BUFFER_S: dict[str, int] = {"CM": 4 * 60, "ST": 4 * 60, "RT": 4 * 60,
+                                    "NP": 6 * 60, "SE": 8 * 60}
+GARAGE_TO_PENN_WALK_S = 5 * 60  # drive-all-the-way: Midtown garage → NY Penn
+CATCH_NEXT_K = 4  # trains kept after the planned one (incl. after the deadline)
+LEAVE_HOME_MAX_ROUNDS = 3  # fixed-point iterations for leave_home
+LEAVE_HOME_TOL_S = 30
+PATH_HOBOKEN_STOP = "Hoboken"  # PATH GTFS stop_name; Leg id "PATH:Hoboken"
+PATH_33RD_STOP = "33rd Street"
+GARAGE_DEST = "NYG"  # drive_destinations.csv id for the Midtown garage
 
 # --- Lateness ----------------------------------------------------------------
 # Late-arrival buckets in minutes, half-open [lo, hi). The user's

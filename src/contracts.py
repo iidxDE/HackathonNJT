@@ -127,32 +127,67 @@ class CostBreakdown:
         )
 
 
+def _check_contiguous(legs: tuple[Leg, ...]) -> None:
+    for prev, nxt in zip(legs, legs[1:]):
+        if nxt.from_stop != prev.to_stop:
+            raise ValueError(f"Legs not contiguous: {prev.to_stop} → {nxt.from_stop}")
+        if nxt.sched_dep < prev.sched_arr:
+            raise ValueError(f"Leg departs before previous leg arrives at {nxt.from_stop}")
+
+
 @dataclass(frozen=True)
 class Candidate:
-    """A priced, tagged journey: router or safety net → scorer."""
+    """A station policy with a planned train: router or safety net → scorer.
+
+    legs is the planned itinerary (access legs + the planned onward option).
+    catch_next lists onward options from the boarding station, planned first,
+    then the next eligible trains (possibly after the deadline); the scorer
+    lets the rider take the catchable option with the earliest scheduled
+    arrival. costs / exposure are None until the pricer / tagger fill them.
+    An infeasible candidate (no train meets the deadline) is still emitted,
+    with legs empty only if there is no eligible train at all.
+    """
 
     access_station: str  # station code, or "DRIVE" for drive-all-the-way
     legs: tuple[Leg, ...]
-    costs: CostBreakdown
-    exposure: frozenset[InfraAsset]
+    costs: CostBreakdown | None
+    exposure: frozenset[InfraAsset] | None
     source: CandidateSource
+    catch_next: tuple[tuple[Leg, ...], ...] = ()
+    leave_home: datetime | None = None  # UTC
+    infeasible: bool = False
+    infeasible_reason: str | None = None
+    label: str = ""
 
     def __post_init__(self) -> None:
-        if not self.legs:
-            raise ValueError("Candidate needs at least one leg")
+        legs = tuple(self.legs)
+        options = tuple(tuple(o) for o in self.catch_next)
+        if not legs and not self.infeasible:
+            raise ValueError("Candidate needs at least one leg unless infeasible")
         if self.source not in ("router", "safety_net"):
             raise ValueError(f"Unknown source {self.source!r}")
-        for prev, nxt in zip(self.legs, self.legs[1:]):
-            if nxt.from_stop != prev.to_stop:
-                raise ValueError(f"Legs not contiguous: {prev.to_stop} → {nxt.from_stop}")
-            if nxt.sched_dep < prev.sched_arr:
-                raise ValueError(f"Leg departs before previous leg arrives at {nxt.from_stop}")
-        object.__setattr__(self, "legs", tuple(self.legs))
-        object.__setattr__(self, "exposure", frozenset(self.exposure))
+        _check_contiguous(legs)
+        for opt in options:
+            if not opt:
+                raise ValueError("Empty catch_next option")
+            _check_contiguous(opt)
+            if opt[0].from_stop != options[0][0].from_stop:
+                raise ValueError("catch_next options must start at the same stop")
+        if options and legs[-len(options[0]):] != options[0]:
+            raise ValueError("catch_next[0] must be the planned onward legs (a suffix of legs)")
+        if self.leave_home is not None:
+            _require_utc("leave_home", self.leave_home)
+        if self.infeasible and not self.infeasible_reason:
+            raise ValueError("Infeasible candidates need an infeasible_reason")
+        object.__setattr__(self, "legs", legs)
+        object.__setattr__(self, "catch_next", options)
+        if self.exposure is not None:
+            object.__setattr__(self, "exposure", frozenset(self.exposure))
 
     @property
-    def base_cost_usd(self) -> float:
-        return self.costs.total_usd
+    def base_cost_usd(self) -> float | None:
+        """None while unpriced (before 1.4, and the drive-all-the-way reference row)."""
+        return None if self.costs is None else self.costs.total_usd
 
     @property
     def sched_dep(self) -> datetime:
@@ -161,6 +196,11 @@ class Candidate:
     @property
     def sched_arr(self) -> datetime:
         return self.legs[-1].sched_arr
+
+    @property
+    def planned_train(self) -> Leg | None:
+        """The first rail leg of the planned itinerary."""
+        return next((leg for leg in self.legs if leg.mode is LegMode.RAIL), None)
 
     @property
     def n_transfers(self) -> int:

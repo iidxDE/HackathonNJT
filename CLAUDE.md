@@ -187,10 +187,10 @@ Implement as frozen dataclasses (or equivalent typed structures) in one module. 
 **Stop identifiers in legs** (same keys as `data/reference/infra.csv`):
 - NJ Transit stops: the 2-char station code (GTFS `stop_code`, e.g. `CM`, `NP`, `NY`). Secaucus = **`SE`** (upper level; the level NY-bound NEC/NJCL/M&E trains use, verified against the observations: all 148 Secaucus rows on NY-bound runs are SE). `TS` (lower level) serves only Hoboken-bound Main/Bergen/Pascack trains.
 - PATH stops: `"PATH:<stop_name>"`, e.g. `PATH:Hoboken`, `PATH:33rd Street`.
-- Non-station endpoints: `ORIGIN` for the trip origin.
+- Non-station endpoints: `ORIGIN` for the trip origin; `LOT:<dest>` for the parking point a drive ends at (`drive_destinations.csv` id, e.g. `LOT:CM`, `LOT:NYG`), followed by a WALK leg to the station (the station buffer).
 - **Cross-system transfers require an explicit WALK leg**, e.g. `HB` → `PATH:Hoboken`, `PATH:33rd Street` → `NY`. `Candidate` rejects legs that do not connect stop to stop.
 
-**Candidate** (router or safety net → scorer): access station · ordered legs · itemized costs (fuel, tolls, parking, fare, PATH fare) · base cost · exposure tags · source (`"router"` or `"safety_net"`).
+**Candidate** (router or safety net → scorer): a **station policy with a planned train**. Access station · ordered legs (planned itinerary) · itemized costs (fuel, tolls, parking, fare, PATH fare; `None` until priced) · base cost · exposure tags (`None` until tagged) · source (`"router"` or `"safety_net"`) · `catch_next` (onward options from the boarding stop: planned first, then the next `CATCH_NEXT_K` departures, including after the deadline; the scorer takes the catchable one with the earliest scheduled arrival) · `leave_home` · `infeasible` + reason (no train meets the deadline; legs empty only if no eligible train exists) · label.
 
 **DelaySamples** (model → scorer): draws × stops array of whole-run delay samples (no NaN) · pool key used · fallback level · run count (distinct effective runs, not draws).
 

@@ -81,3 +81,29 @@ def active_service_ids(feed: GtfsFeed, service_date: date) -> set[str]:
 def active_trips(feed: GtfsFeed, service_date: date) -> pd.DataFrame:
     """Trips running on a service date."""
     return feed.trips[feed.trips["service_id"].isin(active_service_ids(feed, service_date))]
+
+
+def stop_pairs(feed: GtfsFeed, service_date: date, from_key: str, to_key: str,
+               key_col: str = "stop_code") -> pd.DataFrame:
+    """Trips on service_date that stop at from_key and later at to_key.
+
+    Stops are matched on stops[key_col] (e.g. stop_code or stop_name). One row
+    per trip: trip_id, route_id, direction_id, trip_short_name, dep_s (at
+    from_key), arr_s (at to_key), terminal (key of the trip's last stop).
+    Times are GTFS seconds since service-day midnight (may exceed 86,400).
+    """
+    trips = active_trips(feed, service_date)
+    st = feed.stop_times[feed.stop_times["trip_id"].isin(trips["trip_id"])]
+    st = st.merge(feed.stops[["stop_id", key_col]], on="stop_id")
+    st = st.assign(seq=st["stop_sequence"].astype(int)).rename(columns={key_col: "key"})
+    a = st.loc[st["key"] == from_key, ["trip_id", "seq", "departure_s"]]
+    b = st.loc[st["key"] == to_key, ["trip_id", "seq", "arrival_s"]]
+    pairs = a.merge(b, on="trip_id", suffixes=("_a", "_b"))
+    pairs = pairs[pairs["seq_a"] < pairs["seq_b"]]
+    terminal = st.sort_values("seq").drop_duplicates("trip_id", keep="last").set_index("trip_id")["key"]
+    cols = [c for c in ("trip_id", "route_id", "direction_id", "trip_short_name") if c in trips]
+    out = pairs.merge(trips[cols], on="trip_id")
+    out = out.rename(columns={"departure_s": "dep_s", "arrival_s": "arr_s"})
+    out["terminal"] = out["trip_id"].map(terminal)
+    return (out.drop(columns=["seq_a", "seq_b"])
+               .sort_values(["arr_s", "dep_s"]).reset_index(drop=True))

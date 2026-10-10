@@ -36,6 +36,7 @@ class DriveEstimate:
     low_s: float  # sorted min of the three traffic models
     mode_s: float  # sorted middle (BEST_GUESS unless the models cross)
     high_s: float  # sorted max
+    best_guess_s: float  # BEST_GUESS as returned (for planning; may lie outside low–high order)
     distance_m: float
     toll_usd: float  # NaN if Google expects tolls but gave no price
     flags: frozenset[AssumptionFlag] = field(default_factory=frozenset)
@@ -57,6 +58,7 @@ def lookup(cache: pd.DataFrame, dest: str, depart_utc: datetime | pd.Timestamp) 
     slots_s = np.array([s.timestamp() for s in wide.index])
     models = [_interp(slots_s, wide[m].to_numpy(float), t_s) for m in (OPTIMISTIC, BEST_GUESS, PESSIMISTIC)]
     low, mode, high = sorted(models)
+    best_guess = models[1]
 
     flags = {AssumptionFlag.DRIVE_VARIANCE_ASSUMED}
     if t_s < slots_s[0] or t_s > slots_s[-1]:
@@ -66,7 +68,7 @@ def lookup(cache: pd.DataFrame, dest: str, depart_utc: datetime | pd.Timestamp) 
 
     best = rows[rows["model"] == BEST_GUESS]
     nearest = best.iloc[int(np.argmin(np.abs([s.timestamp() - t_s for s in best["slot_utc"]])))]
-    return DriveEstimate(dest, t.to_pydatetime(), low, mode, high, float(nearest["distance_m"]),
+    return DriveEstimate(dest, t.to_pydatetime(), low, mode, high, best_guess, float(nearest["distance_m"]),
                          float(nearest["toll_usd"]), frozenset(flags))
 
 

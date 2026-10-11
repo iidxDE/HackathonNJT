@@ -331,10 +331,11 @@ def choose(flat: list[ScoredOption]) -> list[ScoredOption]:
 def rank_options(scored: list[ScoredOption]) -> list[ScoredOption]:
     """Assign rank (gen_cost) and sched_rank (money + time_cost); infeasible last.
 
-    Unrankable (no simulation, or money not priced, e.g. drive all the way)
-    keep rank None and are shown as reference rows.
+    Unrankable rows keep rank None: no simulation, money not priced (drive all the
+    way, a reference row), or a partial cost (any unknown item, e.g. a missing fare):
+    a partial total understates the cost, so it must never outrank a complete one.
     """
-    rankable = [s for s in scored if s.gen_cost_usd is not None]
+    rankable = [s for s in scored if s.gen_cost_usd is not None and "partial" not in s.flags]
 
     def ordered(key) -> dict[int, int]:
         ranked = sorted(rankable, key=lambda s: ("infeasible" in s.flags, key(s)))

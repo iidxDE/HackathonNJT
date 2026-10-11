@@ -110,6 +110,11 @@ def check_router_v1(data) -> tuple[list[str], int, int]:
             diffs.append(f"journeys ({name}) differ: {len(ref_j)} reference vs {len(new_j)}")
     ref = pd.read_csv(SCORED_REF, dtype=str, keep_default_na=False)
     new = scored_snapshot(data, Settings(exclusion_runs=False))
+    # H20 fix 1 (intended change): partial-cost rows are unrankable. Their rank / sched_rank
+    # are not compared; every other field is.
+    for df in (ref, new):
+        part = df["flags"].str.split(";").map(lambda f: "partial" in f)
+        df.loc[part, ["rank", "sched_rank"]] = ""
     diffs += diff_frames(ref, new)
     return diffs, len(ref_j), len(ref)
 
@@ -283,7 +288,8 @@ def main() -> None:
         + ("".join(f"\n   - {b}" for b in bad2)),
         f"3. exclusion=None identical to router-v1: **{'pass' if not bad3 else 'FAIL'}** "
         f"({n_ref_j} journeys; {n_ref_rows} scored rows = 2 sources × 12 sweep settings × every station "
-        "variant, compared as strings against `eval/reference/`, written at router-v1 code)."
+        "variant, compared as strings against `eval/reference/`, written at router-v1 code; rank and sched_rank of "
+        "partial-cost rows excluded, since they are unrankable by design after H20 fix 1)."
         + ("".join(f"\n   - {b}" for b in bad3[:30])),
         "",
         "### Exposure cross-check (check 2)",

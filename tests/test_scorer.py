@@ -137,6 +137,17 @@ def test_ranking_rules(inputs):
     assert {scored["SE → NY"].rank, scored["CM → HB + PATH"].rank} == {1, 2}
 
 
+def test_partial_cost_rows_are_unrankable(inputs):
+    """H20 fix 1: a partial total understates cost, so even the cheapest partial row gets no rank."""
+    s = Settings(deadline_s=DEADLINE_S, n=300)
+    rows = score_all(candidates(inputs.drive_cache), inputs, s)
+    se = next(r for r in rows if r.candidate_id == "SE → NY")
+    cheap_partial = replace(se, gen_cost_usd=0.01, flags=se.flags | {"partial"})
+    ranked = by_id(rank_options([cheap_partial if r is se else r for r in rows]))
+    assert ranked["SE → NY"].rank is None and ranked["SE → NY"].sched_rank is None
+    assert ranked["CM → HB + PATH"].rank == 1  # the headline (rank 1) is never a partial row
+
+
 def _rail(frm, to, dep_s, arr_s, train, route="10", terminal="NY"):
     from src.contracts import Leg, LegMode
     return Leg(LegMode.RAIL, frm, to, to_utc(TUE, dep_s), to_utc(TUE, arr_s), train_number=train,

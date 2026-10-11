@@ -34,7 +34,7 @@ EXPOSURE_LABELS = {
     InfraAsset.PATH_TUNNELS: "PATH tunnels",
 }
 FLAG_LABELS = {
-    "infeasible": "no train meets deadline", "partial": "cost partial", "not_priced": "cost not priced",
+    "infeasible": "no train meets deadline", "partial": "cost incomplete (not ranked)", "not_priced": "cost not priced",
     "fills_early": "lot fills early", "no_daily_parking": "no daily parking data",
     "parking_rate_unknown": "parking rate unknown", "parking_unavailable": "no non-resident parking", "l4_pool": "no delay data",
     "drive_variance_degenerate": "no drive spread", "exposure_varies": "exposure varies by train",

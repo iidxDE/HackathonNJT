@@ -10,7 +10,7 @@ from src.scoring import alerts as al
 needs_data = pytest.mark.skipif(
     not (config.POOLS_PARQUET.exists() and config.DRIVE_CACHE_PARQUET.exists()
          and config.network_npz(config.DEMO_SERVICE_DATE).exists()), reason="artifacts not built")
-NAMES = {"PORT JERVIS": "PO", "SECAUCUS UPPER LVL": "SE", "HOBOKEN": "HB"}
+NAMES = {"PORT JERVIS": "PO", "SLOATSBURG": "XG", "SECAUCUS UPPER LVL": "SE", "HOBOKEN": "HB"}
 
 
 def _alert(**kw) -> Alert:
@@ -28,11 +28,12 @@ def test_other_alerts_are_display_only_with_a_direction_and_scope_gate():
     trip = {"SE", "TS", "HB", "NP"}
     ex, n = al.alert_to_effects(_alert(stations=("Port Jervis", "Hoboken"), direction="both"), "replayed", "t",
                                 trip, NAMES)
-    assert ex is None and not n.affects_trip and "not affecting" in n.effect  # HB is only a reference point
+    assert ex is None and not n.affects_trip  # HB is only a reference point
+    assert n.effect == "Not affecting your trip: Port Jervis is not on your routes."
     ex, n = al.alert_to_effects(_alert(stations=("Secaucus",), direction="toward_ny"), "replayed", "t", trip, NAMES)
-    assert ex is None and n.affects_trip and "display only" in n.effect
+    assert ex is None and n.affects_trip and "Secaucus Upper Lvl is on your routes" in n.effect
     _, n = al.alert_to_effects(_alert(stations=("Secaucus",), direction="away_from_ny"), "replayed", "t", trip, NAMES)
-    assert not n.affects_trip and "away from NY" in n.effect
+    assert not n.affects_trip and n.effect == "Not affecting your trip: away from NY only."
 
 
 def test_alert_set_is_hashable_and_none_is_empty():
@@ -87,7 +88,10 @@ def test_a017_replay_changes_nothing(data):
     from src.scoring.scorer import Settings
     a = data.alert_set("A017")
     assert a.exclusion is None and a.notices and not any(n.affects_trip for n in a.notices)
-    assert all(n.label == "replayed" and "not affecting your trip" in n.effect for n in a.notices)
+    for n in a.notices:  # one alert in the cached A017 extraction
+        assert n.label == "replayed" and not n.affects_trip
+        assert n.effect == "Not affecting your trip: Port Jervis, Sloatsburg are not on your routes."
+        assert not any(code in n.effect for code in ("PO", "XG", "HB", "["))  # names, not codes or lists
     x, y = _by_id(evaluate(data, Settings(n=500))), _by_id(evaluate(data, Settings(n=500, alert_set=a)))
     assert set(x) == set(y)
     for k in x:
@@ -123,3 +127,36 @@ def test_app_disruption_toggle_resimulates_and_shows_deltas():
     box = next(b for b in at.selectbox if b.label == "Disruption")
     box.set_value("penn_scenario").run()
     assert table().equals(penn1)
+
+
+def test_penn_alert_for_outbound_trains_only_is_display_only():
+    ex, n = al.alert_to_effects(_alert(penn_disruption=True, direction="away_from_ny"), "replayed", "t", {"NP"},
+                                NAMES)
+    assert ex is None and not n.affects_trip and "Penn alert for outbound trains only" in n.effect
+    ex, _ = al.alert_to_effects(_alert(penn_disruption=True, direction=None), "replayed", "t", {"NP"}, NAMES)
+    assert ex == config.AVOID_PENN_NRT  # direction unknown: applied
+
+
+@needs_data
+def test_a017_with_hoboken_named_is_still_not_affecting(data):
+    """Synthetic A017 that also names Hoboken: HB is a reference point (SCOPE_IGNORE), same result."""
+    from src.build.alert_labels import read_rows
+    from src.build.alerts_extract import load_cache, replay
+    from src.scoring.alerts import trip_stations
+    from src.scoring.scorer import Settings
+    row = next(r for r in read_rows()[1] if r["alert_id"] == "A017")
+    names = dict(zip(data.njt.stops["stop_name"].str.upper().str.replace(".", "", regex=False),
+                     data.njt.stops["stop_code"].astype(str)))
+    stations = trip_stations(data.options_and_flags(Settings())[0])
+    assert "HB" in stations  # Hoboken is on the routes; the gate must still ignore it
+    for a in replay(row["msg_text"], load_cache()):
+        a2 = type(a)(**{**a.__dict__, "stations": (*a.stations, "Hoboken")})
+        ex, n = al.alert_to_effects(a2, "replayed", "t", stations, names)
+        assert ex is None and not n.affects_trip and "Hoboken" not in n.effect
+
+
+@needs_data
+def test_penn_scenario_is_avoid_penn_nrt_and_leaves_the_no_alert_snapshot(data):
+    from src.routing.snapshot import OPTIONS_REF, options_snapshot
+    assert data.alert_set("penn_scenario").exclusion == config.AVOID_PENN_NRT
+    assert options_snapshot(data.network) == OPTIONS_REF.read_text(encoding="utf-8").splitlines()

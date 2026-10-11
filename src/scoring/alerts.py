@@ -78,17 +78,33 @@ def station_codes(names: Iterable[str], name_to_code: Mapping[str, str]) -> set[
 
 def alert_to_effects(alert: Alert, label: str, text: str, trip_stations: set[str],
                      name_to_code: Mapping[str, str]) -> tuple[Exclusion | None, AlertNotice]:
-    """One alert → (router exclusion or None, banner notice)."""
-    if alert.penn_disruption:
+    """One alert → (router exclusion or None, banner notice). Reasons name stations in words."""
+    outbound_only = alert.direction == "away_from_ny"
+    if alert.penn_disruption and not outbound_only:
         return config.AVOID_PENN_NRT, AlertNotice(
             label, text, "trains to / from NY Penn removed (Penn and North River tunnels unavailable)", True)
+    if alert.penn_disruption:
+        return None, AlertNotice(label, text, "Not affecting your trip: Penn alert for outbound trains only.", False)
     named = station_codes(alert.stations, name_to_code) - SCOPE_IGNORE
-    toward = alert.direction in (None, "toward_ny", "both")
-    affects = toward and bool(named & trip_stations)
-    why = ("may affect your trip (display only: delays and cancellations are not applied yet)" if affects else
-           "not affecting your trip" + (" (direction away from NY)" if not toward else
-                                        f" (named stations {sorted(named) or 'none'} are not on your options)"))
-    return None, AlertNotice(label, text, why, affects)
+    names = _station_names(named, name_to_code)
+    if outbound_only:
+        return None, AlertNotice(label, text, "Not affecting your trip: away from NY only.", False)
+    hit = named & trip_stations
+    if hit:
+        return None, AlertNotice(label, text, f"May affect your trip: {_station_names(hit, name_to_code)} "
+                                 f"{'is' if len(hit) == 1 else 'are'} on your routes (display only: delays and "
+                                 "cancellations are not applied yet).", True)
+    why = (f"{names} {'is' if len(named) == 1 else 'are'} not on your routes." if named
+           else "it names no station on your routes.")
+    return None, AlertNotice(label, text, f"Not affecting your trip: {why}", False)
+
+
+def _station_names(codes: Iterable[str], name_to_code: Mapping[str, str]) -> str:
+    """Stop codes → readable GTFS stop names ('Port Jervis, Sloatsburg'), sorted."""
+    by_code: dict[str, str] = {}
+    for name, code in name_to_code.items():
+        by_code.setdefault(code, name)
+    return ", ".join(sorted(by_code.get(c, c).title() for c in codes))
 
 
 def trip_stations(options: Mapping[str, list]) -> set[str]:

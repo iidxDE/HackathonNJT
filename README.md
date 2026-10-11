@@ -116,5 +116,8 @@ python -m src.build.alerts_extract --live   # calls Gemini for uncached messages
   `route_all(base=...)`; A017 is an archived message replayed from the Gemini cache (label *replayed*).
   Only `penn_disruption` changes the options. Every other alert kind is display only, with a direction /
   scope gate ("not affecting your trip"); delay shifts and train bans from alerts are not applied yet.
-- The scope gate compares the stations an alert names with the stations the options board or alight at
-  (Hoboken and NY Penn ignored as reference points); intermediate stops are not checked.
+- Alerts other than a Penn disruption are display only. A Penn disruption marked outbound only
+  (`away_from_ny`) is display only too ("Penn alert for outbound trains only").
+- The scope check compares the stations an alert names with the stations the options board or alight at;
+  intermediate stops are not checked. Hoboken and NY Penn are ignored as reference points, so an alert about
+  a Hoboken-terminal problem reads "not affecting your trip".

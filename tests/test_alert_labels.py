@@ -83,7 +83,8 @@ def _row(alert_id: str) -> dict[str, str]:
 
 @needs_gtfs
 def test_verify_after_midnight_a003(idx):
-    """4393, 12:08 AM from Long Branch, published 00:17 local 10-10 → service day 10-09 at 24:08."""
+    """4393, 12:08 AM from Long Branch, published 00:17 local 10-10 → service day 10-09 at 24:08
+    (absolute 10-10 00:08, 9 min before the pubdate: inside [−6 h, +18 h])."""
     d, _ = al.verify(idx, _row("A003"))
     assert d["verify_status"] == "ok"
     assert d["gtfs_service_date"] == "2026-10-09" and d["gtfs_time_at_named_stop"] == "24:08:00"
@@ -105,3 +106,49 @@ def test_verify_statuses(idx):
     late = dict(_row("A005"), msg_text=_row("A005")["msg_text"].replace("9:08 AM", "9:30 AM"))
     d, why = al.verify(idx, late)
     assert d["verify_status"] == "time_mismatch" and "09:30" in why
+
+
+@needs_gtfs
+def test_verify_picks_trip_by_absolute_time_window(idx):
+    """A032: 3201's 1:46 AM arrival, published 01:17 on 10-09 → the 10-08 service day (25:46),
+    not 10-09's trip, which runs a day later."""
+    d, _ = al.verify(idx, _row("A032"))
+    assert d["verify_status"] == "ok" and d["gtfs_service_date"] == "2026-10-08"
+    assert d["gtfs_time_at_named_stop"] == "25:46:00"
+
+
+@needs_gtfs
+def test_next_night_duplicate_does_not_match(idx):
+    """A synthetic copy of 4393 on 10-10 (24:08 = 10-11 00:08) is 24 h past A003's pubdate: never chosen."""
+    from datetime import date
+
+    import pandas as pd
+
+    real = idx.trips_on(date(2026, 10, 9))
+    dup = real[real["train"] == "4393"]
+    saved = idx.trips_on(date(2026, 10, 10))
+    idx.trips_by_date[date(2026, 10, 10)] = pd.concat([saved, dup])
+    try:
+        d, _ = al.verify(idx, _row("A003"))
+    finally:
+        idx.trips_by_date[date(2026, 10, 10)] = saved
+    assert d["verify_status"] == "ok" and d["gtfs_service_date"] == "2026-10-09"
+
+
+@needs_gtfs
+def test_on_demo_date_requires_same_route_and_time(idx):
+    # M&E 6654 runs to PSNY on 10-09; on 10-13 (cutover) the number runs to Hoboken
+    assert al.verify(idx, _row("A020"))[0]["on_demo_date"] == "N (number reused)"
+    assert al.verify(idx, _row("A002"))[0]["on_demo_date"] == "Y"
+    assert al.verify(idx, _row("A026"))[0]["on_demo_date"] == "N (unverified)"
+
+
+def test_read_rows_accepts_bom_and_rejects_other_files(tmp_path):
+    bom = tmp_path / "bom.csv"
+    bom.write_bytes(bytes([0xEF, 0xBB, 0xBF]) + FIXTURE.read_bytes())
+    cols, rows = al.read_rows(bom)
+    assert cols[0] == "alert_id" and len(rows) == 34
+    other = tmp_path / "other.csv"
+    other.write_text("a,b" + chr(13) + chr(10) + "1,2" + chr(13) + chr(10), encoding="utf-8")
+    with pytest.raises(ValueError):
+        al.read_rows(other)

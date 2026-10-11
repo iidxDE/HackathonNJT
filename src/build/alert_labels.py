@@ -19,7 +19,8 @@ including the embedded CRLF in A017's msg_text.
 Verification: service day = pubdate_utc in America/New_York; trip_short_name ==
 train (leading zeros stripped); every station + clock time the message gives for
 that train must match the trip's stop_times within config.ALERT_TIME_TOL_S. No
-match → previous service day with times ≥ 24:00. derived_direction: toward_ny
+match must lie in
+[pubdate − 6 h, pubdate + 18 h] in absolute time (closest wins). derived_direction: toward_ny
 iff the trip's direction_id equals that of its route's trips terminating at NY
 or HB (route's line group if the route has none); parity: even → toward_ny.
 ok = found + time match + derived == parity.
@@ -41,6 +42,10 @@ from src import config, gtfs
 
 log = logging.getLogger(__name__)
 
+# Columns every alert_samples file has (src/build/alerts_sample.py), label schema aside.
+BASE_COLUMNS = ("alert_id", "source", "bucket", "msg_text", "msg_type", "msg_source", "msg_agency",
+                "station_scope", "line_scope", "pubdate_utc", "first_seen_file", "lbl_lines", "lbl_trains",
+                "lbl_delay_min", "lbl_cause", "lbl_scope", "lbl_notes")
 HUMAN_COLUMNS = ("lbl_kind", "lbl_direction", "lbl_penn_disruption", "lbl_cut_at_station", "lbl_reviewed")
 DERIVED_COLUMNS = ("gtfs_service_date", "gtfs_trip_id", "gtfs_route_id", "gtfs_direction_id", "gtfs_terminal",
                    "gtfs_serves_ny", "gtfs_time_at_named_stop", "derived_direction", "parity_direction",
@@ -67,9 +72,17 @@ PROPOSED: dict[str, tuple[str, str, str, str]] = {  # kind, direction, penn_disr
 
 def read_rows(path: Path = config.ALERT_SAMPLES_CSV) -> tuple[list[str], list[dict[str, str]]]:
     """(columns, rows) with every value a str, exactly as stored."""
-    with open(path, encoding="utf-8", newline="") as fh:
+    with open(path, encoding="utf-8-sig", newline="") as fh:  # tolerate a BOM from spreadsheet saves
         reader = csv.DictReader(fh)
-        return list(reader.fieldnames or []), [dict(r) for r in reader]
+        columns, rows = list(reader.fieldnames or []), [dict(r) for r in reader]
+    missing = [c for c in BASE_COLUMNS if c not in columns]
+    if missing or not ({"lbl_affects_penn", "lbl_affects_penn_legacy"} & set(columns)):
+        raise ValueError(f"{path}: not an alert_samples file (missing columns {missing or ['lbl_affects_penn*']})")
+    if "lbl_affects_penn_legacy" in columns:
+        missing = [c for c in HUMAN_COLUMNS if c not in columns]
+        if missing:
+            raise ValueError(f"{path}: migrated file lacks label columns {missing}")
+    return columns, rows
 
 
 def to_csv_text(columns: list[str], rows: list[dict[str, str]]) -> str:
@@ -248,71 +261,123 @@ def service_day(pubdate_utc: str) -> date | None:
     return ts.tz_convert(config.LOCAL_TZ).date()
 
 
-def _time_matches(idx: RailIndex, trip_id: str, ms: list[tuple[Mention, str]], previous_day: bool
-                  ) -> tuple[bool, str, str]:
-    """(all mentions match, GTFS time at the first named stop, reason)."""
+def _stop_s(idx: RailIndex, trip_id: str, m: Mention, code: str) -> int | None:
+    """GTFS seconds of the mention's event (arrival / departure) at its stop, None if not served."""
     st = idx.stop_times(trip_id)
-    first_time, reasons = "", []
+    rows = st[st["code"] == code]
+    if rows.empty:
+        return None
+    return int(rows.iloc[0]["arrival_s" if m.kind == "arrival" else "departure_s"])
+
+
+def _clock_diff_s(gtfs_s: int, clock_s: int) -> int:
+    """Distance between a GTFS time and a message clock time on the 24 h circle."""
+    d = abs(gtfs_s % 86400 - clock_s)
+    return min(d, 86400 - d)
+
+
+def absolute_time(service_date: date, gtfs_s: int) -> pd.Timestamp:
+    """Local midnight of the service date + GTFS seconds, as an absolute UTC instant."""
+    midnight = pd.Timestamp(service_date).tz_localize(config.LOCAL_TZ)
+    return (midnight + pd.Timedelta(seconds=gtfs_s)).tz_convert("UTC")
+
+
+def _pubdate(row: dict[str, str]) -> pd.Timestamp | None:
+    if not row.get("pubdate_utc"):
+        return None
+    ts = pd.Timestamp(row["pubdate_utc"])
+    return ts.tz_localize("UTC") if ts.tzinfo is None else ts.tz_convert("UTC")
+
+
+def _check_trip(idx: RailIndex, trip_id: str, ms: list[tuple[Mention, str]]) -> tuple[list[str], int | None]:
+    """(clock mismatches, GTFS seconds at the first named stop)."""
+    reasons, first = [], None
     for k, (m, code) in enumerate(ms):
-        rows = st[st["code"] == code]
-        if rows.empty:
+        s = _stop_s(idx, trip_id, m, code)
+        if s is None:
             reasons.append(f"trip does not stop at {m.station} ({code})")
             continue
-        col = "arrival_s" if m.kind == "arrival" else "departure_s"
-        s = int(rows.iloc[0][col])
         if k == 0:
-            first_time = _hms(s)
-        targets = [m.clock_s + 86400] if previous_day else [m.clock_s, m.clock_s + 86400]
-        if min(abs(s - t) for t in targets) > config.ALERT_TIME_TOL_S:
+            first = s
+        if _clock_diff_s(s, m.clock_s) > config.ALERT_TIME_TOL_S:
             reasons.append(f"{m.kind} {m.station} {_hms(m.clock_s)[:5]} vs GTFS {_hms(s)[:5]}")
-    return not reasons, first_time, "; ".join(reasons)
+    return reasons, first
+
+
+def _demo_status(idx: RailIndex, train: str, route: str | None, ms: list[tuple[Mention, str]],
+                 matched_s: int | None, demo_date: date) -> str:
+    """Y only if the demo date runs the same train number on the same route within
+    config.ALERT_DEMO_REUSE_TOL_S at the named stop; a reused number is not a replay candidate."""
+    demo = idx.trips_on(demo_date)
+    demo = demo[demo["train"] == train]
+    if demo.empty:
+        return "N"
+    if route is None or matched_s is None or not ms:
+        return "N (unverified)"
+    m, code = ms[0]
+    for t in demo.itertuples():
+        s = _stop_s(idx, str(t.trip_id), m, code)
+        if str(t.route_id) == route and s is not None and abs(s - matched_s) <= config.ALERT_DEMO_REUSE_TOL_S:
+            return "Y"
+    return "N (number reused)"
 
 
 def verify(idx: RailIndex, row: dict[str, str], demo_date: date = config.DEMO_SERVICE_DATE
            ) -> tuple[dict[str, str], str]:
-    """Derived columns for one message, plus a reason for any non-ok status."""
+    """Derived columns for one message, plus a reason for any non-ok status.
+
+    Candidates: trips numbered like the message's train on the service days around the
+    pubdate. A candidate matches if every named stop's clock time agrees within
+    ALERT_TIME_TOL_S and its absolute time at the first named stop (local midnight of its
+    service date + GTFS seconds) lies in [pubdate − 6 h, pubdate + 18 h]; the closest wins.
+    """
     out = {c: "" for c in DERIVED_COLUMNS}
     train, segment = primary_train(row["msg_text"])
     if train is None:
         out["verify_status"] = "no_train"
         return out, "no train number in the message"
     out["parity_direction"] = "toward_ny" if int(train) % 2 == 0 else "away_from_ny"
-    out["on_demo_date"] = "Y" if (idx.trips_on(demo_date)["train"] == train).any() else "N"
     ms = [(m, code) for m in mentions(segment) if (code := idx.resolve_station(m.station))]
     unresolved = [m.station for m in mentions(segment) if not idx.resolve_station(m.station)]
-    day = service_day(row["pubdate_utc"])
-    if day is None:
-        out["verify_status"] = "not_found"
+    pub, day = _pubdate(row), service_day(row["pubdate_utc"])
+    if pub is None:
+        out["verify_status"], out["on_demo_date"] = "not_found", _demo_status(idx, train, None, ms, None, demo_date)
         return out, "no pubdate_utc"
-    attempts = []  # (date, previous_day, matching trips, all trips)
-    for d, prev in ((day, False), (day - timedelta(days=1), True)):
-        trips = idx.trips_on(d)
-        trips = trips[trips["train"] == train]
-        ok = [(t, *_time_matches(idx, str(t.trip_id), ms, prev)) for t in trips.itertuples()] if ms else []
-        attempts.append((d, prev, [x for x in ok if x[1]], trips, ok))
-        if any(x[1] for x in ok):
-            break
-    d, prev, matched, trips, tried = attempts[-1]
-    if not matched:
-        found = [a for a in attempts if len(a[3])]
-        if not found:
-            out["verify_status"] = "not_found"
-            return out, f"train {train} not in GTFS on {day} or {day - timedelta(days=1)}"
-        d, prev, _, trips, tried = found[0]
-        t = trips.iloc[0]
-        _fill(idx, out, t, d, tried[0][2] if tried else "")
+    lo, hi = pub - pd.Timedelta(hours=config.ALERT_PUB_WINDOW_H[0]), pub + pd.Timedelta(hours=config.ALERT_PUB_WINDOW_H[1])
+    cands = [(d, t) for d in (day - timedelta(days=1), day, day + timedelta(days=1))
+             for t in idx.trips_on(d).pipe(lambda x: x[x["train"] == train]).itertuples()]
+    if not cands:
+        out["verify_status"] = "not_found"
+        out["on_demo_date"] = _demo_status(idx, train, None, ms, None, demo_date)
+        return out, f"train {train} not in GTFS on {day - timedelta(days=1)} … {day + timedelta(days=1)}"
+    good, clock_ok_outside, mismatches = [], [], []
+    for d, t in cands:
+        reasons, s = _check_trip(idx, str(t.trip_id), ms) if ms else (["no station + clock time parsed"], None)
+        if reasons:
+            mismatches.append((d, t, s, reasons))
+            continue
+        at = absolute_time(d, s)
+        (good if lo <= at <= hi else clock_ok_outside).append((abs(at - pub), d, t, s, at))
+    if not good:
+        d, t, s = (clock_ok_outside[0][1:4] if clock_ok_outside else mismatches[0][:3])
+        _fill(idx, out, t, d, "" if s is None else _hms(s))
         out["verify_status"] = "time_mismatch"
-        why = ("no station + clock time parsed for the train" if not ms else
-               "; ".join(x[3] for x in tried if x[3]) or "no time match")
+        out["on_demo_date"] = _demo_status(idx, train, None, ms, None, demo_date)
+        if clock_ok_outside:
+            why = "clock times match only outside pubdate −6 h … +18 h: " + ", ".join(
+                f"{x[1]} at {x[4].tz_convert(config.LOCAL_TZ):%m-%d %H:%M}" for x in clock_ok_outside)
+        else:
+            why = "; ".join(r for x in mismatches for r in x[3])
         if unresolved:
             why += f" (unresolved station names: {unresolved})"
         return out, why
-    if len(matched) > 1:
-        _fill(idx, out, matched[0][0], d, matched[0][2])
+    good.sort(key=lambda x: x[0])
+    _, d, t, s, at = good[0]
+    _fill(idx, out, t, d, _hms(s))
+    out["on_demo_date"] = _demo_status(idx, train, str(t.route_id), ms, s, demo_date)
+    if len(good) > 1 and good[1][0] == good[0][0]:
         out["verify_status"] = "ambiguous"
-        return out, f"{len(matched)} trips numbered {train} match on {d}"
-    t, _, first_time, _ = matched[0]
-    _fill(idx, out, t, d, first_time)
+        return out, f"{len(good)} trips numbered {train} equally close to the pubdate"
     if not out["derived_direction"]:
         out["verify_status"] = "ambiguous"
         return out, f"route {out['gtfs_route_id']}: no single direction_id toward NY / HB"
@@ -320,7 +385,7 @@ def verify(idx: RailIndex, row: dict[str, str], demo_date: date = config.DEMO_SE
         out["verify_status"] = "parity_mismatch"
         return out, f"derived {out['derived_direction']} vs parity {out['parity_direction']}"
     out["verify_status"] = "ok"
-    notes = ["previous service day, after midnight"] if prev else []
+    notes = [f"service day {d} (GTFS {_hms(s)[:5]}, after midnight)"] if s >= 86400 else []
     if row.get("lbl_trains") and train not in row["lbl_trains"].split(";"):
         notes.append("lbl_trains does not list the message's train")
     return out, "; ".join(notes)
@@ -384,9 +449,14 @@ def report(rows: list[dict[str, str]], reasons: dict[str, str]) -> str:
         "",
         f"Generated by `python -m src.build.alert_labels` at build `{build_stamp()}` from "
         f"`data/reference/alert_samples.csv` ({len(df)} messages, {n_rev} reviewed) and the rail GTFS. "
-        "Derived columns come from GTFS; they never overwrite a `lbl_*` value. Service day = pubdate in New York "
-        f"local time (retry: previous service day, times ≥ 24:00); clock times must match within "
-        f"{config.ALERT_TIME_TOL_S // 60} min.",
+        "Derived columns come from GTFS; they never overwrite a `lbl_*` value. Candidates: trips with the "
+        "message's train number on the service days around the pubdate; every named stop's clock time must match "
+        f"within {config.ALERT_TIME_TOL_S // 60} min, and the trip's absolute time at the first named stop (local "
+        "midnight of its service date + GTFS seconds) must lie in [pubdate − "
+        f"{config.ALERT_PUB_WINDOW_H[0]} h, pubdate + {config.ALERT_PUB_WINDOW_H[1]} h]; the closest wins. "
+        f"on_demo_date = Y only for the same route within {config.ALERT_DEMO_REUSE_TOL_S // 60} min at the named "
+        "stop on the demo date (\"N (number reused)\" otherwise; \"N (unverified)\" when the message's trip "
+        "was not verified).",
         "",
         "## verify_status",
         "",

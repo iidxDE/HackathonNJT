@@ -78,6 +78,8 @@ GEMINI_CACHE_JSONL = REPO_ROOT / "data" / "alerts" / "gemini_cache.jsonl"  # tra
 ALERT_LABEL_CHECK_MD = REPO_ROOT / "eval" / "alert_label_check.md"
 ALERT_EXTRACTION_MD = REPO_ROOT / "eval" / "alert_extraction.md"
 ALERT_TIME_TOL_S = 5 * 60  # message clock time vs GTFS stop time (train verification)
+ALERT_PUB_WINDOW_H = (6, 18)  # matched trip time within [pubdate − 6 h, pubdate + 18 h]
+ALERT_DEMO_REUSE_TOL_S = 30 * 60  # on_demo_date: same route, same time at the named stop ± this
 
 # Canonical NJT rail line names (customer-facing) → GTFS route_id(s) of the new
 # timetable feed. Main Line and Bergen County Line share GTFS route 5; light rail

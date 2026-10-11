@@ -1,0 +1,81 @@
+CM → HB + PATH		rail CM->HB 10:31-11:26 802 | walk HB->PATH:Hoboken 11:26-11:31  | path PATH:Hoboken->PATH:33rd Street 11:37-11:52 BLU | walk PATH:33rd Street->NY 11:52-11:56 
+CM → HB + PATH		rail CM->HB 10:50-11:38 6612 | walk HB->PATH:Hoboken 11:38-11:43  | path PATH:Hoboken->PATH:33rd Street 11:45-12:00 BLU | walk PATH:33rd Street->NY 12:00-12:04 
+CM → HB + PATH		rail CM->HB 11:13-11:58 6614 | walk HB->PATH:Hoboken 11:58-12:03  | path PATH:Hoboken->PATH:33rd Street 12:09-12:24 BLU | walk PATH:33rd Street->NY 12:24-12:28 
+CM → HB + PATH		rail CM->HB 11:37-12:21 6616 | walk HB->PATH:Hoboken 12:21-12:26  | path PATH:Hoboken->PATH:33rd Street 12:33-12:48 BLU | walk PATH:33rd Street->NY 12:48-12:52 
+CM → HB + PATH		rail CM->HB 11:50-12:31 872 | walk HB->PATH:Hoboken 12:31-12:36  | path PATH:Hoboken->PATH:33rd Street 12:41-12:56 BLU | walk PATH:33rd Street->NY 12:56-13:00 
+CM → HB + PATH		rail CM->HB 12:13-13:00 6620 | walk HB->PATH:Hoboken 13:00-13:05  | path PATH:Hoboken->PATH:33rd Street 13:05-13:20 BLU | walk PATH:33rd Street->NY 13:20-13:24 
+CM → HB + PATH		rail CM->HB 12:36-13:18 6624 | walk HB->PATH:Hoboken 13:18-13:23  | path PATH:Hoboken->PATH:33rd Street 13:32-13:47 BLU | walk PATH:33rd Street->NY 13:47-13:51 
+NP → NY		rail NP->NY 10:31-10:49 3914
+NP → NY		rail NP->NY 10:38-10:56 3114
+NP → NY		rail NP->NY 10:41-10:59 3704
+NP → NY		rail NP->NY 10:44-11:08 3312
+NP → NY		rail NP->NY 11:12-11:34 3918
+NP → NY		rail NP->NY 11:16-11:36 3708
+NP → NY		rail NP->NY 11:19-11:38 3818
+NP → NY		rail NP->NY 11:22-11:43 3218
+NP → NY		rail NP->NY 11:32-11:51 3124
+NP → NY		rail NP->NY 11:36-11:54 3922
+NP → NY		rail NP->NY 11:41-11:59 3502
+NP → NY		rail NP->NY 11:44-12:02 3220
+NP → NY		rail NP->NY 11:47-12:14 3710
+NP → NY		rail NP->NY 12:13-12:36 3924
+NP → NY		rail NP->NY 12:17-12:38 3712
+NP → NY		rail NP->NY 12:20-12:40 3826
+NP → NY		rail NP->NY 12:22-12:42 3224
+NP → NY		rail NP->NY 12:34-12:52 3828
+NP → NY		rail NP->NY 12:38-12:59 3926
+NP → NY		rail NP->NY 12:43-13:01 3326
+NP → NY		rail NP->NY 12:48-13:06 3714
+NP → NY		rail NP->NY 12:51-13:13 3506
+NP → NY		rail NP->NY 13:17-13:39 3932
+NP → NY		rail NP->NY 13:23-13:41 3830
+NP → NY		rail NP->NY 13:29-13:51 3228
+NP → NY		rail NP->NY 13:39-13:57 3720
+RT → HB + PATH		rail RT->HB 10:47-11:20 6406 | walk HB->PATH:Hoboken 11:20-11:25  | path PATH:Hoboken->PATH:33rd Street 11:29-11:44 BLU | walk PATH:33rd Street->NY 11:44-11:48 
+RT → HB + PATH		rail RT->HB 11:04-11:33 408 | walk HB->PATH:Hoboken 11:33-11:38  | path PATH:Hoboken->PATH:33rd Street 11:45-12:00 BLU | walk PATH:33rd Street->NY 12:00-12:04 
+RT → HB + PATH		rail RT->HB 11:30-12:03 6410 | walk HB->PATH:Hoboken 12:03-12:08  | path PATH:Hoboken->PATH:33rd Street 12:09-12:24 BLU | walk PATH:33rd Street->NY 12:24-12:28 
+RT → HB + PATH		rail RT->HB 11:43-12:12 412 | walk HB->PATH:Hoboken 12:12-12:17  | path PATH:Hoboken->PATH:33rd Street 12:17-12:32 BLU | walk PATH:33rd Street->NY 12:32-12:36 
+RT → HB + PATH		rail RT->HB 12:02-12:31 872 | walk HB->PATH:Hoboken 12:31-12:36  | path PATH:Hoboken->PATH:33rd Street 12:41-12:56 BLU | walk PATH:33rd Street->NY 12:56-13:00 
+RT → HB + PATH		rail RT->HB 12:26-13:00 6620 | walk HB->PATH:Hoboken 13:00-13:05  | path PATH:Hoboken->PATH:33rd Street 13:05-13:20 BLU | walk PATH:33rd Street->NY 13:20-13:24 
+SE → NY		rail SE->NY 10:33-10:45 3210
+SE → NY		rail SE->NY 10:39-10:52 8616
+SE → NY		rail SE->NY 10:56-11:08 3312
+SE → NY		rail SE->NY 11:15-11:28 8618
+SE → NY		rail SE->NY 11:30-11:43 3218
+SE → NY		rail SE->NY 11:43-11:56 8620
+SE → NY		rail SE->NY 12:01-12:14 3710
+SE → NY		rail SE->NY 12:16-12:28 8622
+SE → NY		rail SE->NY 12:37-12:49 8624
+SE → NY		rail SE->NY 12:46-12:59 3926
+SE → NY		rail SE->NY 13:00-13:13 3506
+SE → NY		rail SE->NY 13:14-13:27 8626
+SE → NY		rail SE->NY 13:38-13:51 3228
+SE → TS → HB + PATH	alt_avoids:penn_nrt	walk SE->TS 10:45-10:50  | rail TS->HB 10:50-11:02 1148 | walk HB->PATH:Hoboken 11:02-11:07  | path PATH:Hoboken->PATH:33rd Street 11:10-11:25 BLU | walk PATH:33rd Street->NY 11:25-11:29 
+SE → TS → HB + PATH	alt_avoids:penn_nrt	walk SE->TS 10:56-11:01  | rail TS->HB 11:01-11:13 46 | walk HB->PATH:Hoboken 11:13-11:18  | path PATH:Hoboken->PATH:33rd Street 11:20-11:35 BLU | walk PATH:33rd Street->NY 11:35-11:39 
+SE → TS → HB + PATH	alt_avoids:penn_nrt	walk SE->TS 11:02-11:07  | rail TS->HB 11:07-11:19 1202 | walk HB->PATH:Hoboken 11:19-11:24  | path PATH:Hoboken->PATH:33rd Street 11:29-11:44 BLU | walk PATH:33rd Street->NY 11:44-11:48 
+SE → TS → HB + PATH	alt_avoids:penn_nrt	walk SE->TS 11:15-11:20  | rail TS->HB 11:20-11:32 1150 | walk HB->PATH:Hoboken 11:32-11:37  | path PATH:Hoboken->PATH:33rd Street 11:37-11:52 BLU | walk PATH:33rd Street->NY 11:52-11:56 
+SE → TS → HB + PATH	alt_avoids:penn_nrt	walk SE->TS 11:23-11:28  | rail TS->HB 11:28-11:40 1152 | walk HB->PATH:Hoboken 11:40-11:45  | path PATH:Hoboken->PATH:33rd Street 11:45-12:00 BLU | walk PATH:33rd Street->NY 12:00-12:04 
+SE → TS → HB + PATH	alt_avoids:penn_nrt	walk SE->TS 11:30-11:35  | rail TS->HB 11:35-11:47 1608 | walk HB->PATH:Hoboken 11:47-11:52  | path PATH:Hoboken->PATH:33rd Street 11:53-12:08 BLU | walk PATH:33rd Street->NY 12:08-12:12 
+SE → TS → HB + PATH	alt_avoids:penn_nrt	walk SE->TS 11:33-11:38  | rail TS->HB 11:38-11:50 1204 | walk HB->PATH:Hoboken 11:50-11:55  | path PATH:Hoboken->PATH:33rd Street 12:01-12:16 BLU | walk PATH:33rd Street->NY 12:16-12:20 
+SE → TS → HB + PATH	alt_avoids:penn_nrt	walk SE->TS 11:41-11:46  | rail TS->HB 11:46-11:58 50 | walk HB->PATH:Hoboken 11:58-12:03  | path PATH:Hoboken->PATH:33rd Street 12:09-12:24 BLU | walk PATH:33rd Street->NY 12:24-12:28 
+SE → TS → HB + PATH	alt_avoids:penn_nrt	walk SE->TS 11:51-11:56  | rail TS->HB 11:56-12:08 1252 | walk HB->PATH:Hoboken 12:08-12:13  | path PATH:Hoboken->PATH:33rd Street 12:17-12:32 BLU | walk PATH:33rd Street->NY 12:32-12:36 
+SE → TS → HB + PATH	alt_avoids:penn_nrt	walk SE->TS 11:59-12:04  | rail TS->HB 12:04-12:16 1612 | walk HB->PATH:Hoboken 12:16-12:21  | path PATH:Hoboken->PATH:33rd Street 12:25-12:40 BLU | walk PATH:33rd Street->NY 12:40-12:44 
+SE → TS → HB + PATH	alt_avoids:penn_nrt	walk SE->TS 12:09-12:14  | rail TS->HB 12:14-12:26 52 | walk HB->PATH:Hoboken 12:26-12:31  | path PATH:Hoboken->PATH:33rd Street 12:33-12:48 BLU | walk PATH:33rd Street->NY 12:48-12:52 
+SE → TS → HB + PATH	alt_avoids:penn_nrt	walk SE->TS 12:18-12:23  | rail TS->HB 12:23-12:35 1614 | walk HB->PATH:Hoboken 12:35-12:40  | path PATH:Hoboken->PATH:33rd Street 12:41-12:56 BLU | walk PATH:33rd Street->NY 12:56-13:00 
+SE → TS → HB + PATH	alt_avoids:penn_nrt	walk SE->TS 12:23-12:28  | rail TS->HB 12:28-12:40 1616 | walk HB->PATH:Hoboken 12:40-12:45  | path PATH:Hoboken->PATH:33rd Street 12:49-13:04 BLU | walk PATH:33rd Street->NY 13:04-13:08 
+SE → TS → HB + PATH	alt_avoids:penn_nrt	walk SE->TS 12:33-12:38  | rail TS->HB 12:38-12:50 1208 | walk HB->PATH:Hoboken 12:50-12:55  | path PATH:Hoboken->PATH:33rd Street 12:57-13:12 BLU | walk PATH:33rd Street->NY 13:12-13:16 
+SE → TS → HB + PATH	alt_avoids:penn_nrt	walk SE->TS 12:38-12:43  | rail TS->HB 12:43-12:55 1618 | walk HB->PATH:Hoboken 12:55-13:00  | path PATH:Hoboken->PATH:33rd Street 13:05-13:20 BLU | walk PATH:33rd Street->NY 13:20-13:24 
+SE → TS → HB + PATH	alt_avoids:penn_nrt	walk SE->TS 12:48-12:53  | rail TS->HB 12:53-13:05 54 | walk HB->PATH:Hoboken 13:05-13:10  | path PATH:Hoboken->PATH:33rd Street 13:13-13:28 BLU | walk PATH:33rd Street->NY 13:28-13:32 
+SE → TS → HB + PATH	alt_avoids:penn_nrt	walk SE->TS 12:58-13:03  | rail TS->HB 13:03-13:15 1258 | walk HB->PATH:Hoboken 13:15-13:20  | path PATH:Hoboken->PATH:33rd Street 13:22-13:37 BLU | walk PATH:33rd Street->NY 13:37-13:41 
+SE → TS → HB + PATH	alt_avoids:penn_nrt	walk SE->TS 13:10-13:15  | rail TS->HB 13:15-13:27 1650 | walk HB->PATH:Hoboken 13:27-13:32  | path PATH:Hoboken->PATH:33rd Street 13:32-13:47 BLU | walk PATH:33rd Street->NY 13:47-13:51 
+ST → HB + PATH		rail ST->HB 10:43-11:20 6406 | walk HB->PATH:Hoboken 11:20-11:25  | path PATH:Hoboken->PATH:33rd Street 11:29-11:44 BLU | walk PATH:33rd Street->NY 11:44-11:48 
+ST → HB + PATH		rail ST->HB 11:00-11:33 408 | walk HB->PATH:Hoboken 11:33-11:38  | path PATH:Hoboken->PATH:33rd Street 11:45-12:00 BLU | walk PATH:33rd Street->NY 12:00-12:04 
+ST → HB + PATH		rail ST->HB 11:07-11:54 6314 | walk HB->PATH:Hoboken 11:54-11:59  | path PATH:Hoboken->PATH:33rd Street 12:01-12:16 BLU | walk PATH:33rd Street->NY 12:16-12:20 
+ST → HB + PATH		rail ST->HB 11:25-12:03 6410 | walk HB->PATH:Hoboken 12:03-12:08  | path PATH:Hoboken->PATH:33rd Street 12:09-12:24 BLU | walk PATH:33rd Street->NY 12:24-12:28 
+ST → HB + PATH		rail ST->HB 11:38-12:12 412 | walk HB->PATH:Hoboken 12:12-12:17  | path PATH:Hoboken->PATH:33rd Street 12:17-12:32 BLU | walk PATH:33rd Street->NY 12:32-12:36 
+ST → HB + PATH		rail ST->HB 11:45-12:21 6616 | walk HB->PATH:Hoboken 12:21-12:26  | path PATH:Hoboken->PATH:33rd Street 12:33-12:48 BLU | walk PATH:33rd Street->NY 12:48-12:52 
+ST → HB + PATH		rail ST->HB 11:57-12:31 872 | walk HB->PATH:Hoboken 12:31-12:36  | path PATH:Hoboken->PATH:33rd Street 12:41-12:56 BLU | walk PATH:33rd Street->NY 12:56-13:00 
+ST → HB + PATH		rail ST->HB 12:09-12:42 414 | walk HB->PATH:Hoboken 12:42-12:47  | path PATH:Hoboken->PATH:33rd Street 12:49-13:04 BLU | walk PATH:33rd Street->NY 13:04-13:08 
+ST → HB + PATH		rail ST->HB 12:20-13:00 6620 | walk HB->PATH:Hoboken 13:00-13:05  | path PATH:Hoboken->PATH:33rd Street 13:05-13:20 BLU | walk PATH:33rd Street->NY 13:20-13:24 
+ST → HB + PATH		rail ST->HB 12:38-13:10 416 | walk HB->PATH:Hoboken 13:10-13:15  | path PATH:Hoboken->PATH:33rd Street 13:22-13:37 BLU | walk PATH:33rd Street->NY 13:37-13:41 
+ST → HB + PATH		rail ST->HB 12:43-13:18 6624 | walk HB->PATH:Hoboken 13:18-13:23  | path PATH:Hoboken->PATH:33rd Street 13:32-13:47 BLU | walk PATH:33rd Street->NY 13:47-13:51 

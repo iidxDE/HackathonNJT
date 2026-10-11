@@ -20,6 +20,7 @@ from src.routing.raptor import describe, route_profile
 REFERENCE_DIR = config.REPO_ROOT / "eval" / "reference"
 JOURNEYS_REF = REFERENCE_DIR / "router_v1_journeys.txt"
 SCORED_REF = REFERENCE_DIR / "router_v1_scored.csv"
+OPTIONS_REF = REFERENCE_DIR / "router_v1_1_options.txt"  # route_all at 3cae762 (exclusion runs on)
 
 PENALTIES = (0, 25, 75, 150)
 MARGINS_MIN = (0, 5, 10)
@@ -40,6 +41,22 @@ def journeys_snapshot(network, service_date=config.DEMO_SERVICE_DATE, deadline_s
     for s in stations:
         for j in route_profile(network, config.ROUTER_NJT_PREFIX + s, service_date, deadline_s, **kwargs):
             out.append(f"{s}\t{describe(j)}")
+    return out
+
+
+def options_snapshot(network, service_date=config.DEMO_SERVICE_DATE, deadline_s=config.DEMO_DEADLINE_S,
+                     **kwargs) -> list[str]:
+    """route_all output, one line per option: label, flags, every leg (mode, stops, times, train)."""
+    from src.routing.adapter import route_all
+
+    res = route_all(network, service_date, deadline_s, fresh=True, **kwargs)
+    out = []
+    for label in sorted(res.options):
+        flags = ",".join(sorted(res.label_flags.get(label, ())))
+        for o in res.options[label]:
+            legs = " | ".join(f"{leg.mode.value} {leg.from_stop}->{leg.to_stop} {leg.sched_dep:%H:%M}-"
+                              f"{leg.sched_arr:%H:%M} {leg.train_number or leg.gtfs_line or ''}" for leg in o)
+            out.append(f"{label}	{flags}	{legs}")
     return out
 
 

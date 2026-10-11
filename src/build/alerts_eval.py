@@ -186,6 +186,30 @@ def _md(df: pd.DataFrame) -> str:
     return "\n".join(out)
 
 
+def alternatives_added_at(alert_ids: list[str]) -> dict[str, str]:
+    """First commit time (ISO) at which each row's lbl_cause holds alternatives ("a;b"), from git
+    history of the answer key. Empty when git is unavailable or the change is uncommitted."""
+    import csv
+    import io
+    import subprocess
+
+    def git(*a: str) -> str:
+        return subprocess.run(["git", *a], cwd=config.REPO_ROOT, capture_output=True, text=True,
+                              encoding="utf-8", timeout=20).stdout
+
+    rel = config.ALERT_SAMPLES_CSV.relative_to(config.REPO_ROOT).as_posix()
+    out: dict[str, str] = {}
+    try:
+        for line in git("log", "--reverse", "--format=%H %cI", "--", rel).splitlines():
+            sha, when = line.split(" ", 1)
+            for r in csv.DictReader(io.StringIO(git("show", f"{sha}:{rel}"), newline="")):
+                if r.get("alert_id") in alert_ids and ";" in r.get("lbl_cause", "") and r["alert_id"] not in out:
+                    out[r["alert_id"]] = when
+    except Exception:  # noqa: BLE001 — provenance is informational only
+        return out
+    return out
+
+
 def main(argv: list[str] | None = None) -> None:
     from src.scoring.pipeline import build_stamp
 
@@ -216,6 +240,34 @@ def main(argv: list[str] | None = None) -> None:
         "",
     ]
     reviewed = scored
+    # Cause alternatives: how many, and whether each was written before its extraction ran.
+    alt_rows = [r for r in reviewed if ";" in r["lbl_cause"]]
+    added = alternatives_added_at([r["alert_id"] for r in alt_rows])
+    alt_txt = []
+    for r in alt_rows:
+        ext = cache[cache_key(r["msg_text"], versions[0])].get("extracted_at", "")
+        when = added.get(r["alert_id"], "")
+        order = ("unknown (uncommitted)" if not when else
+                 "added before extraction" if pd.Timestamp(when) < pd.Timestamp(ext) else
+                 "added after extraction (output was visible)")
+        pred = message_prediction(replay(r["msg_text"], cache, versions[0])).cause
+        first = r["lbl_cause"].split(";")[0]
+        effect = ("predicted the first (pre-review) cause: no effect on the score" if pred == first else
+                  f"predicted `{pred}`: credited only through an alternative")
+        utc = (lambda t: pd.Timestamp(t).tz_convert("UTC").strftime("%m-%d %H:%MZ") if t else "?")
+        alt_txt.append(f"{r['alert_id']} `{r['lbl_cause']}` ({order}; labeled {utc(when)}, extracted "
+                       f"{utc(ext)}; {effect})")
+    served = sorted({str(cache[cache_key(r["msg_text"], v)].get("raw_response", {}).get("modelVersion", "?"))
+                     for r in reviewed for v in versions})
+    lines += [
+        f"Requested model `{config.GEMINI_MODEL_ID}`; served model version(s): "
+        f"{', '.join(f'`{m}`' for m in served) or '—'} (`modelVersion` in each cached response).",
+        "",
+        f"Rows whose lbl_cause lists acceptable alternatives: **{len(alt_rows)}**"
+        + (": " + "; ".join(alt_txt) if alt_txt else "") + ". A prediction matching any alternative counts "
+        "as correct; alternatives added after the extraction output was visible can only raise the score.",
+        "",
+    ]
     cov = []
     for v in versions:
         have = lambda rs: sum(cache_key(r["msg_text"], v) in cache for r in rs)  # noqa: E731

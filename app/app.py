@@ -40,6 +40,9 @@ FLAG_LABELS = {
     "drive_variance_degenerate": "no drive spread", "exposure_varies": "exposure varies by train",
     "censored": "may miss every listed train",
 }
+# Exclusion-run alternatives (3.1). Never "avoids fragile infrastructure": the row's
+# other assets (exposure tagger) are listed next to the label.
+ALT_LABELS = {f"{config.ALT_FLAG_PREFIX}penn_nrt": "Avoids Penn Station and the North River tunnels."}
 
 
 @st.cache_resource(show_spinner="Loading timetables and delay pools…")
@@ -74,8 +77,18 @@ def origin_label() -> str:
         return "demo origin"
 
 
+def alt_text(s: ScoredOption) -> str:
+    """Alternative label plus the assets the exposure tagger still reports on the row."""
+    labels = [ALT_LABELS.get(f, f) for f in sorted(s.flags) if f.startswith(config.ALT_FLAG_PREFIX)]
+    if not labels:
+        return ""
+    others = [EXPOSURE_LABELS[a] for a in sorted(s.candidate.exposure or (), key=lambda a: a.value)]
+    return " ".join(labels) + (f" Still uses: {', '.join(others)}." if others else "")
+
+
 def flags_text(s: ScoredOption) -> str:
-    return ", ".join(FLAG_LABELS.get(f, f) for f in sorted(s.flags) if f in FLAG_LABELS) or ""
+    flags = ", ".join(FLAG_LABELS.get(f, f) for f in sorted(s.flags) if f in FLAG_LABELS)
+    return " ".join(x for x in (alt_text(s), flags) if x)
 
 
 def infeasible_reason(s: ScoredOption) -> str:

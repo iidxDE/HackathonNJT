@@ -26,6 +26,7 @@ from typing import Mapping
 import numpy as np
 
 from src import config
+from src.routing.exclusion import Exclusion
 from src.routing.network import Network
 
 log = logging.getLogger(__name__)
@@ -112,6 +113,43 @@ def _prepare(net: Network) -> _Prepared:
     return prep
 
 
+@dataclass(frozen=True)
+class _Banned:
+    """An Exclusion resolved to network indices (empty sets = no exclusion)."""
+    no_board: frozenset[int] = frozenset()
+    no_alight: frozenset[int] = frozenset()
+    trips: frozenset[int] = frozenset()  # global trip indices
+    patterns: frozenset[int] = frozenset()  # patterns of banned routes
+    foot: frozenset[tuple[int, int]] = frozenset()
+
+
+def _resolve(net: Network, pr: _Prepared, ex: Exclusion | None) -> _Banned:
+    """Exclusion ids → indices. Ids not in the network are ignored with a warning."""
+    if not ex:
+        return _Banned()
+
+    def stops(ids, what):
+        unknown = sorted(i for i in ids if i not in pr.sidx)
+        if unknown:
+            log.warning("exclusion %s: stops not in the network ignored: %s", what, unknown)
+        return frozenset(pr.sidx[i] for i in ids if i in pr.sidx)
+
+    routes = [str(r) for r in net.pattern_route.tolist()]
+    unknown_routes = sorted(set(ex.banned_routes) - set(routes))
+    if unknown_routes:
+        log.warning("exclusion banned_routes: routes not in the network ignored: %s", unknown_routes)
+    bad_trips = sorted(t for t in ex.banned_trips if not 0 <= t < len(net.trip_ids))
+    if bad_trips:
+        log.warning("exclusion banned_trips: trip indices out of range ignored: %s", bad_trips)
+    foot = frozenset((pr.sidx[a], pr.sidx[b]) for a, b in ex.banned_footpaths
+                     if a in pr.sidx and b in pr.sidx)
+    if len(foot) != len(ex.banned_footpaths):
+        log.warning("exclusion banned_footpaths: pairs with unknown stops ignored")
+    return _Banned(stops(ex.no_board, "no_board"), stops(ex.no_alight, "no_alight"),
+                   frozenset(ex.banned_trips) - frozenset(bad_trips),
+                   frozenset(p for p, r in enumerate(routes) if r in ex.banned_routes), foot)
+
+
 def route_profile(network: Network, access_stop: str, service_date: date, deadline: int, *,
                   target: str = config.ROUTER_DEST_STOP,
                   max_rounds: int = config.ROUTER_MAX_ROUNDS,
@@ -120,6 +158,7 @@ def route_profile(network: Network, access_stop: str, service_date: date, deadli
                   arrive_after_s: int = config.ROUTER_ARRIVE_AFTER_S,
                   depart_after_s: int = config.ROUTER_DEPART_AFTER_S,
                   mode_by_feed: Mapping[str, str] = config.ROUTER_MODE_BY_FEED,
+                  exclusion: Exclusion | None = None,
                   stats: ProfileStats | None = None) -> list[Journey]:
     """Pareto profile of journeys access_stop → target.
 
@@ -129,12 +168,17 @@ def route_profile(network: Network, access_stop: str, service_date: date, deadli
     rides ≤ max_rides_out, sorted by departure; longer ones are counted in
     stats.dropped_rides and logged. Same-stop transfers use the network's
     same-stop minimum; a stop reached on foot needs no extra minimum.
+
+    exclusion: stops where no ride may start / end, trips and routes that may
+    not be ridden, footpaths that may not be walked (set lookups in the scan;
+    the network is not changed). None (or an empty Exclusion) is the plain run.
     """
     t_start = time.perf_counter()
     st = stats if stats is not None else ProfileStats()
     if network.service_date != service_date.strftime("%Y%m%d"):
         raise ValueError(f"network is for {network.service_date}, asked {service_date}")
     pr = _prepare(network)
+    ban = _resolve(network, pr, exclusion)
     src, tgt = pr.sidx[access_stop], pr.sidx[target]
     n, K = network.n_stops, max_rounds
     xfer = int(network.same_stop_transfer_s)
@@ -143,12 +187,16 @@ def route_profile(network: Network, access_stop: str, service_date: date, deadli
 
     # Departure times (from the access stop) within the window, latest first.
     deps: set[int] = set()
-    starts = [(src, 0)] + pr.foot[src]
+    starts = [(src, 0)] + [(to, w) for to, w in pr.foot[src] if (src, to) not in ban.foot]
     for s, walk in starts:
+        if s in ban.no_board:
+            continue
         for p, i in pr.stop_routes[s]:
-            for row_dep, row_ok in zip(pr.p_dep[p], pr.p_board[p]):
+            if p in ban.patterns:
+                continue
+            for row, (row_dep, row_ok) in enumerate(zip(pr.p_dep[p], pr.p_board[p])):
                 t = row_dep[i] - walk
-                if row_ok[i] and t_lo <= t <= t_hi:
+                if row_ok[i] and t_lo <= t <= t_hi and pr.p_trip0[p] + row not in ban.trips:
                     deps.add(t)
 
     tau = [[INF] * n for _ in range(K + 1)]
@@ -172,6 +220,8 @@ def route_profile(network: Network, access_stop: str, service_date: date, deadli
         walked[0][src] = False
         marked = {src}
         for to, w in pr.foot[src]:
+            if (src, to) in ban.foot:
+                continue
             if t + w < tau[0][to]:
                 tau[0][to] = t + w
                 parent[0][to] = ("walk", src, w)
@@ -182,6 +232,8 @@ def route_profile(network: Network, access_stop: str, service_date: date, deadli
             queue: dict[int, int] = {}
             for s in marked:
                 for p, i in pr.stop_routes[s]:
+                    if p in ban.patterns:
+                        continue
                     if queue.get(p, 1 << 30) > i:
                         queue[p] = i
             new_marked: set[int] = set()
@@ -193,9 +245,10 @@ def route_profile(network: Network, access_stop: str, service_date: date, deadli
                 board_rows, alight_rows = pr.p_board[p], pr.p_alight[p]
                 trip = -1
                 board_i = -1
+                t0 = pr.p_trip0[p]
                 for i in range(i0, len(stops)):
                     s = stops[i]
-                    if trip >= 0 and alight_rows[trip][i]:
+                    if trip >= 0 and alight_rows[trip][i] and s not in ban.no_alight:
                         a = arr_rows[trip][i]
                         bound = min(best_le(k, s), best_le(k, tgt), limit)
                         if a < bound:
@@ -204,20 +257,22 @@ def route_profile(network: Network, access_stop: str, service_date: date, deadli
                             walked[k][s] = False
                             new_marked.add(s)
                             st.labels_touched += 1
-                    if prev[s] >= INF:
+                    if prev[s] >= INF or s in ban.no_board:
                         continue
                     ready = prev[s] + (0 if (k == 1 or walked[k - 1][s]) else xfer)
                     if trip >= 0 and ready > dep_rows[trip][i]:
                         continue
                     col = pr.p_dep_cols[p][i]
                     j = int(np.searchsorted(col, ready, side="left"))
-                    while j < len(col) and not board_rows[j][i]:
+                    while j < len(col) and (not board_rows[j][i] or t0 + j in ban.trips):
                         j += 1
                     if j < len(col) and (trip < 0 or j < trip):
                         trip, board_i = j, i
             # Footpaths from stops reached by a ride this round (no chained walks).
             for s in list(new_marked):
                 for to, w in pr.foot[s]:
+                    if (s, to) in ban.foot:
+                        continue
                     a = cur[s] + w
                     if a < min(best_le(k, to), best_le(k, tgt), limit):
                         cur[to] = a

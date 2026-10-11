@@ -95,20 +95,25 @@ def path_fare_item(tables: PriceTables, travel_date: date | None = None,
     route ids) overrides it when the rail leg ends at HB on one of those lines
     (Portal cutover cross-honoring)."""
     fares = tables.path_fares
+    not_covered = ""
     if travel_date is not None and rail_alight == "HB" and "valid_from" in fares:
         ymd = travel_date.isoformat()
         for _, rule in fares[fares["valid_from"] != ""].iterrows():
             routes = set(filter(None, rule["lines"].split(";")))
-            if (rule["valid_from"] <= ymd <= rule["valid_to"]
-                    and (rule["weekdays_only"].lower() != "true" or travel_date.weekday() < 5)
-                    and (not routes or rail_route in routes)):
+            in_force = (rule["valid_from"] <= ymd <= rule["valid_to"]
+                        and (rule["weekdays_only"].lower() != "true" or travel_date.weekday() < 5))
+            if in_force and (not routes or rail_route in routes):
                 url, checked = _source(rule)
                 return CostItem(ROUND_TRIP * float(rule["amount"]), url, checked,
                                 f"{rule['fare_type']} {rule['valid_from']}–{rule['valid_to']}: "
                                 f"{rule['notes']}")
+            if in_force:  # e.g. Main/Bergen to HB: not a diverted Midtown Direct rider
+                not_covered += (f"; not cross-honored: route {rail_route} is not in {rule['fare_type']} "
+                                f"lines {rule['lines'].replace(';', '/')} ({rule['source_url']})")
     row = fares[fares["fare_type"] == "single_ride"].iloc[0]
     url, checked = _source(row)
-    return CostItem(ROUND_TRIP * float(row["amount"]), url, checked, f"2 × single ride {row['amount']}")
+    return CostItem(ROUND_TRIP * float(row["amount"]), url, checked,
+                    f"2 × single ride {row['amount']}{not_covered}")
 
 
 @_memoized
@@ -203,12 +208,18 @@ def price_candidate(c: Candidate, tables: PriceTables, drive_cache: DriveCache,
     rails = [leg for leg in c.legs if leg.mode is LegMode.RAIL]
     last = rails[-1] if rails else None  # fare is O–D: first rail boarding → last rail alighting
     origin, dest = (rail.from_stop, last.to_stop) if rail else (c.access_station, config.DESTINATION_STATION)
+    alias = config.FARE_STATION_ALIAS
+    fare = fare_item(tables, alias.get(origin, origin), alias.get(dest, dest))
+    if origin in alias or dest in alias:
+        fare = replace(fare, note=f"{fare.note}; {'/'.join(s for s in (origin, dest) if s in alias)} "
+                                  f"priced as {'/'.join(alias[s] for s in (origin, dest) if s in alias)} "
+                                  "(same fare station)")
     uses_path = any(leg.mode is LegMode.PATH for leg in c.legs)
     park_hhmm = (pd.Timestamp(c.legs[0].sched_arr).tz_convert(config.LOCAL_TZ).strftime("%H:%M")
                  if c.legs and c.legs[0].mode is LegMode.DRIVE else None)
     parking, flags = parking_item(tables, c.access_station, resident, park_hhmm)
     tolls, fuel = drive_items(tables, drive_cache, c, mpg)
-    costs = CostBreakdown(fare=fare_item(tables, origin, dest), parking=parking, tolls=tolls, fuel=fuel,
+    costs = CostBreakdown(fare=fare, parking=parking, tolls=tolls, fuel=fuel,
                           path_fare=path_fare_item(tables, _local_date(rail), last.gtfs_line if last else None,
                                                    last.to_stop if last else None)
                           if uses_path else None, flags=flags)

@@ -193,3 +193,36 @@ def test_non_resident_morning_ban_makes_parking_unavailable():
     assert parking_item(t, "RT", park_hhmm="12:30")[0].usd == 5.0
     assert parking_item(t, "RT", resident=True, park_hhmm="07:50")[0].usd == 5.0
     assert parking_item(t, "XX")[1] == {"no_daily_parking"}  # not collected ≠ unavailable
+
+
+def test_ts_priced_as_se_and_main_bergen_pays_path():
+    """3.1: SE → TS → HB + PATH. Fare looked up as SE → HB; parking at SE; line 14 not cross-honored."""
+    from datetime import date as d
+
+    from src.pricing.pricer import path_fare_item
+
+    tb = tables()
+    fares = pd.concat([tb.fares, pd.DataFrame([{"origin_code": "SE", "dest_code": "HB", "one_way_adult": "3.00",
+                                                "via": "", "source_url": URL, "checked_date": "2026-10-10"}])],
+                      ignore_index=True)
+    rule = {"fare_type": "portal_cutover_cross_honor", "amount": "0.00", "source_url": URL,
+            "checked_date": "2026-10-10", "notes": "test", "valid_from": "2026-10-11",
+            "valid_to": "2026-11-14", "weekdays_only": "True", "lines": "7;8;2;3"}
+    path = pd.concat([tb.path_fares.assign(valid_from="", valid_to="", weekdays_only="", lines=""),
+                      pd.DataFrame([rule])], ignore_index=True)
+    parking = tb.parking.copy()
+    parking.loc[parking["station_code"] == "SE", ["resident_rate_daily", "non_resident_rate_daily"]] = "30.00"
+    tb = PriceTables(fares, path, parking, tb.driving_costs, tb.drive_dests)
+    r = rail("TS", "HB", "07:56", "08:08", train="1252", line="14")
+    legs = (Leg(LegMode.DRIVE, "ORIGIN", "LOT:SE", t("07:00"), t("07:30")),
+            Leg(LegMode.WALK, "LOT:SE", "SE", t("07:43"), t("07:51")),
+            Leg(LegMode.WALK, "SE", "TS", t("07:51"), t("07:56")), r,
+            Leg(LegMode.WALK, "HB", "PATH:Hoboken", t("08:08"), t("08:13")),
+            Leg(LegMode.PATH, "PATH:Hoboken", "PATH:33rd Street", t("08:17"), t("08:32"), gtfs_line="BLU"),
+            Leg(LegMode.WALK, "PATH:33rd Street", "NY", t("08:32"), t("08:36")))
+    c = Candidate("SE", legs, None, None, "router", leave_home=t("07:00"))
+    k = price_candidate(c, tb, drive_cache("SE", 300.0, 0.0)).costs
+    assert k.fare.usd == pytest.approx(6.00) and "TS priced as SE" in k.fare.note
+    assert k.parking.usd == pytest.approx(30.00)
+    assert k.path_fare.usd == pytest.approx(6.50) and "not cross-honored: route 14" in k.path_fare.note
+    assert path_fare_item(tb, d(2026, 10, 13), "7", "HB").usd == 0.0  # rule itself unchanged

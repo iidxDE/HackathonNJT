@@ -56,6 +56,7 @@ class Settings:
     delay_shift_s: float = 0.0  # added to every pooled delay (sensitivity)
     drive_spread: bool = True  # False = drive takes BEST_GUESS exactly
     source: str = config.DEFAULT_OPTION_SOURCE  # options: "router" or "safety_net"
+    exclusion_runs: bool = True  # router: add config.ROUTER_EXCLUSIONS runs (False = router-v1)
 
 
 @dataclass(frozen=True)

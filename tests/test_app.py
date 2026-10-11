@@ -19,7 +19,10 @@ def test_demo_preset_renders_offline():
     assert at.subheader[0].value.startswith("Best option: ")
     ranked = at.dataframe[0].value
     ranked = getattr(ranked, "data", ranked)
-    assert len(ranked) == 6  # CM/ST/RT → NY have no train: one notice instead of rows
+    assert len(ranked) == 7  # CM/ST/RT → NY have no train: one notice instead of rows
+    # 3.1: the SE exclusion-run alternative, labelled with the assets it still uses
+    alt = ranked.loc[ranked["Option"] == "SE → TS → HB + PATH", "Flags"].iloc[0]
+    assert alt.startswith("Avoids Penn Station and the North River tunnels. Still uses: PATH tunnels.")
     assert not {"CM → NY", "ST → NY", "RT → NY"} & set(ranked["Option"])
     assert any(i.value.startswith("Midtown Direct to Penn suspended weekdays Oct 11–Nov 14") for i in at.info)
     assert {"CM → HB + PATH", "ST → HB + PATH", "RT → HB + PATH"} <= set(ranked["Option"])

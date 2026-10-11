@@ -5,7 +5,7 @@ from datetime import date
 import pytest
 
 from src import config, gtfs
-from src.routing.adapter import AdapterReport, gtfs_utc, label_for, router_options
+from src.routing.adapter import AdapterReport, RouterResult, gtfs_utc, label_for, router_options
 from src.routing.network import Network
 from src.safety_net.candidates import station_options, to_utc
 
@@ -48,7 +48,7 @@ def both():
     net = Network.load(p)
     njt, path = gtfs.load_feed(config.GTFS_NJT_RAIL_DIR), gtfs.load_feed(config.GTFS_PATH_DIR)
     rep = AdapterReport()
-    return station_options(njt, path, D), router_options(net, D, DL, report=rep), rep
+    return station_options(njt, path, D), router_options(net, D, DL, report=rep, exclusions={}), rep
 
 
 def _in_window(o) -> bool:
@@ -126,7 +126,7 @@ def test_router_candidates_score_like_safety_net():
     from src.scoring.pipeline import evaluate, load_demo_data
     from src.scoring.scorer import Settings
     data = load_demo_data()
-    s = Settings(n=500)
+    s = Settings(n=500, exclusion_runs=False)  # router-v1: plain runs only
     a = {x.candidate_id: x for x in evaluate(data, replace(s, source="safety_net"))}
     b = {x.candidate_id: x for x in evaluate(data, replace(s, source="router"))}
     assert set(a) == set(b)
@@ -137,5 +137,8 @@ def test_router_candidates_score_like_safety_net():
 
 def test_router_options_cached(tmp_path):
     net = Network.__new__(Network)  # bare object: only the cache is exercised
-    net.__dict__["_router_options"] = {(date(2026, 10, 13), 1, ("X",)): {"k": []}}
-    assert router_options(net, date(2026, 10, 13), 1, ("X",)) == {"k": []}
+    res = RouterResult({"k": []}, {}, AdapterReport())
+    net.__dict__["_router_options"] = {(date(2026, 10, 13), 1, ("X",), ()): res}
+    assert router_options(net, date(2026, 10, 13), 1, ("X",), exclusions={}) == {"k": []}
+    # the exclusion set is part of the key: the default (penn_nrt) run is not this entry
+    assert (date(2026, 10, 13), 1, ("X",), ()) in net.__dict__["_router_options"]

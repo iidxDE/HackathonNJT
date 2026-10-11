@@ -13,18 +13,26 @@ network-agnostic.
   seconds (the GTFS definition; equals local midnight + seconds on non-DST days).
 - Key = the journey signature (access, [(mode, board, alight) per ride]), line
   not included. Hard-coded signatures keep their safety-net labels.
+- Exclusion runs (3.1): per access station one plain run plus one run per
+  config.ROUTER_EXCLUSIONS entry. Options are unioned by signature and
+  deduplicated on the exact leg tuple. A signature only an exclusion run
+  produced is flagged f"{config.ALT_FLAG_PREFIX}{name}"; exclusion-run trains
+  landing on an existing signature are merged and counted. Exclusion-run shapes
+  the scorer can't simulate go to AdapterReport.unscored_alternatives.
 """
 
 from __future__ import annotations
 
 import logging
 from collections import Counter
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta
 
 from src import config
 from src.contracts import Leg, LegMode
 from src.gtfs import gtfs_to_utc
+from src.routing.exclusion import Exclusion
 from src.routing.network import Network
 from src.routing.raptor import Journey, ProfileStats, route_profile
 from src.safety_net.candidates import (DIRECT_STATIONS, HB, HB_PATH_STATIONS, NY, PATH_33, PATH_HB,
@@ -39,10 +47,24 @@ Signature = tuple[str, tuple[tuple[str, str, str], ...]]
 
 @dataclass
 class AdapterReport:
-    """Counts for eval/router_validation.md."""
-    journeys: Counter = field(default_factory=Counter)  # per access station
-    dropped: Counter = field(default_factory=Counter)  # reason → count
-    profile: dict[str, ProfileStats] = field(default_factory=dict)
+    """Counts for eval/router_validation.md and eval/alternatives.md."""
+    journeys: Counter = field(default_factory=Counter)  # per access station (plain run)
+    dropped: Counter = field(default_factory=Counter)  # reason → count (plain run)
+    profile: dict[str, ProfileStats] = field(default_factory=dict)  # plain run per station
+    # Exclusion runs (3.1)
+    exclusion_profile: dict[tuple[str, str], ProfileStats] = field(default_factory=dict)  # (station, name)
+    label_flags: dict[str, frozenset[str]] = field(default_factory=dict)  # alternative label → flags
+    trains_added_by_exclusion: Counter = field(default_factory=Counter)  # existing label → new options
+    added_trains: dict[str, list[str]] = field(default_factory=dict)  # existing label → train numbers
+    exclusion_options: list[tuple[str, str, Option]] = field(default_factory=list)  # (name, label, option)
+    unscored_alternatives: list[dict] = field(default_factory=list)  # one row per unscored signature
+
+
+@dataclass(frozen=True)
+class RouterResult:
+    options: dict[str, list[Option]]
+    label_flags: dict[str, frozenset[str]]
+    report: AdapterReport
 
 
 def gtfs_utc(service_date: date, seconds: float) -> datetime:
@@ -63,6 +85,8 @@ def label_for(sig: Signature) -> str:
         return f"{access} → NY"
     if rides == (("rail", access, HB), ("path", PATH_HB, PATH_33)):
         return hb_path_label(access)
+    if len(rides) == 2 and rides[0][0] == "rail" and rides[0][2] == HB and rides[1] == ("path", PATH_HB, PATH_33):
+        return f"{access} → {rides[0][1]} → HB + PATH"  # walk to another platform first (SE → TS)
     parts, prev = [], access
     for mode, board, alight in rides:
         if board != prev:
@@ -74,10 +98,22 @@ def label_for(sig: Signature) -> str:
 
 def _supported(rides: tuple[tuple[str, str, str], ...]) -> bool:
     """Shapes the scorer can simulate: rail; rail → rail; rail → HB + PATH Hoboken → 33rd St."""
+    return unsupported_reason(rides) is None
+
+
+def unsupported_reason(rides: tuple[tuple[str, str, str], ...]) -> str | None:
+    """None if the scorer can simulate the shape, else why not."""
     modes = tuple(m for m, _, _ in rides)
     if modes in (("rail",), ("rail", "rail")):
-        return True
-    return modes == ("rail", "path") and rides[1][1:] == (PATH_HB, PATH_33)
+        return None
+    if modes == ("rail", "path") and rides[1][1:] == (PATH_HB, PATH_33):
+        return None
+    if "path" in modes:
+        legs = ", ".join(f"{b.removeprefix('PATH:')} → {a.removeprefix('PATH:')}"
+                         for m, b, a in rides if m == "path")
+        return (f"PATH {legs}: the scorer simulates PATH Hoboken → 33rd St only "
+                "(no other PATH schedule in the scorer; PATH delays not measured)")
+    return f"shape {' → '.join(modes)} not simulated by the scorer"
 
 
 def journey_to_option(j: Journey, net: Network, service_date: date,
@@ -116,26 +152,46 @@ def signature(access: str, option: Option) -> Signature:
                          for leg in option if leg.mode is not LegMode.WALK)
 
 
-def router_options(network: Network, service_date: date = config.DEMO_SERVICE_DATE,
-                   deadline_s: int = config.DEMO_DEADLINE_S,
-                   stations: tuple[str, ...] = config.ROUTER_ACCESS_STATIONS,
-                   report: AdapterReport | None = None) -> dict[str, list[Option]]:
-    """Router Options per signature label (same type as station_options).
+def _exclusions_key(exclusions: Mapping[str, Exclusion]) -> tuple:
+    return tuple(sorted(exclusions.items(), key=lambda kv: kv[0]))
+
+
+def route_all(network: Network, service_date: date = config.DEMO_SERVICE_DATE,
+              deadline_s: int = config.DEMO_DEADLINE_S,
+              stations: tuple[str, ...] = config.ROUTER_ACCESS_STATIONS,
+              exclusions: Mapping[str, Exclusion] | None = None,
+              fresh: bool = False) -> RouterResult:
+    """Plain + exclusion runs per station, unioned by signature (see module doc).
 
     Every hard-coded label is present (empty list when the router finds no such
     journey, e.g. CM → NY during the Portal cutover), so build_candidates keeps
     its infeasible rows. Options within a key are sorted by departure. Cached on
-    the network per (service_date, deadline_s, stations) unless a report is asked.
+    the network per (service_date, deadline_s, stations, exclusions); fresh=True
+    recomputes (fresh timings for reports). exclusions None = config.ROUTER_EXCLUSIONS,
+    {} = plain runs only (router-v1).
     """
+    exclusions = config.ROUTER_EXCLUSIONS if exclusions is None else exclusions
     cache = network.__dict__.setdefault("_router_options", {})
-    key = (service_date, deadline_s, stations)
-    if report is None and key in cache:
+    key = (service_date, deadline_s, stations, _exclusions_key(exclusions))
+    if not fresh and key in cache:
         return cache[key]
-    rep = report if report is not None else AdapterReport()
+    rep = AdapterReport()
     tindex = network.__dict__.get("_trip_index") or network.__dict__.setdefault(
         "_trip_index", network.trip_index())
     out: dict[str, list[Option]] = {f"{s} → NY": [] for s in DIRECT_STATIONS}
     out.update({hb_path_label(s): [] for s in HB_PATH_STATIONS})
+    seen: dict[str, set[Option]] = {}
+    plain_labels: set[str] = set()
+    alt_names: dict[str, set[str]] = {}
+
+    def add(label: str, opt: Option) -> bool:
+        """Union by signature, dedupe on the exact leg tuple. True if new."""
+        if opt in seen.setdefault(label, set()):
+            return False
+        seen[label].add(opt)
+        out.setdefault(label, []).append(opt)
+        return True
+
     for s in stations:
         stats = ProfileStats()
         js = route_profile(network, config.ROUTER_NJT_PREFIX + s, service_date, deadline_s, stats=stats)
@@ -152,9 +208,75 @@ def router_options(network: Network, service_date: date = config.DEMO_SERVICE_DA
                 rep.dropped["shape not simulated by the scorer"] += 1
                 continue
             rep.journeys[s] += 1
-            out.setdefault(label_for(sig), []).append(opt)
+            label = label_for(sig)
+            plain_labels.add(label)
+            add(label, opt)
+        for name, ex in exclusions.items():
+            stats = ProfileStats()
+            js = route_profile(network, config.ROUTER_NJT_PREFIX + s, service_date, deadline_s,
+                               exclusion=ex, stats=stats)
+            rep.exclusion_profile[(s, name)] = stats
+            if stats.dropped_rides:
+                rep.unscored_alternatives.append({
+                    "station": s, "exclusion": name, "key": "—", "options": stats.dropped_rides,
+                    "example": "", "reason": f"more than {config.ROUTER_MAX_RIDES_OUT} rides"})
+            unscored: dict[str, dict] = {}
+            for j in js:
+                opt, why = journey_to_option(j, network, service_date, tindex)
+                if opt is None:
+                    rep.unscored_alternatives.append({"station": s, "exclusion": name, "key": "—",
+                                                      "options": 1, "example": "", "reason": why})
+                    continue
+                sig = signature(s, opt)
+                label = label_for(sig)
+                reason = unsupported_reason(sig[1])
+                if reason is not None:
+                    row = unscored.setdefault(label, {"station": s, "exclusion": name, "key": label,
+                                                      "options": 0, "example": describe_option(opt),
+                                                      "reason": reason})
+                    row["options"] += 1
+                    continue
+                rep.exclusion_options.append((name, label, opt))
+                if label not in plain_labels:
+                    alt_names.setdefault(label, set()).add(name)
+                if add(label, opt) and label in plain_labels:
+                    rep.trains_added_by_exclusion[label] += 1
+                    rep.added_trains.setdefault(label, []).append(option_train(opt))
+            rep.unscored_alternatives += unscored.values()
     for opts in out.values():
         opts.sort(key=lambda o: (o[0].sched_dep, o[-1].sched_arr))
-    if report is None:
-        cache[key] = out
-    return out
+    rep.label_flags = {label: frozenset(config.ALT_FLAG_PREFIX + n for n in sorted(names))
+                       for label, names in alt_names.items()}
+    result = RouterResult(out, rep.label_flags, rep)
+    cache[key] = result
+    return result
+
+
+def option_train(o: Option) -> str:
+    """Train number (or PATH line) of the first ride."""
+    first = next((leg for leg in o if leg.mode is not LegMode.WALK), o[0])
+    return first.train_number or first.gtfs_line or "?"
+
+
+def describe_option(o: Option) -> str:
+    """Rides of an option, local times: 'rail 1150 TS 07:20→HB 07:32 | path ...'."""
+    def hm(t: datetime) -> str:
+        return t.astimezone(config.LOCAL_TZ).strftime("%H:%M")
+    return " | ".join(f"{leg.mode.value} {leg.train_number or leg.gtfs_line} {leg.from_stop} "
+                      f"{hm(leg.sched_dep)}→{leg.to_stop} {hm(leg.sched_arr)}"
+                      for leg in o if leg.mode is not LegMode.WALK)
+
+
+def router_options(network: Network, service_date: date = config.DEMO_SERVICE_DATE,
+                   deadline_s: int = config.DEMO_DEADLINE_S,
+                   stations: tuple[str, ...] = config.ROUTER_ACCESS_STATIONS,
+                   report: AdapterReport | None = None,
+                   exclusions: Mapping[str, Exclusion] | None = None) -> dict[str, list[Option]]:
+    """Router Options per signature label (same type as station_options); see route_all.
+
+    A passed report is filled from a fresh run.
+    """
+    res = route_all(network, service_date, deadline_s, stations, exclusions, fresh=report is not None)
+    if report is not None:
+        report.__dict__.update(res.report.__dict__)
+    return res.options

@@ -191,3 +191,86 @@ def test_profile_pareto_window_and_runtime(demo_net, access):
                             and o.rides <= j.rides), (j, o)
     t = load_transfers(config.TRANSFERS_CSV)
     assert demo_net.same_stop_transfer_s == t.same_stop_s
+
+
+# --- Exclusion (3.1): each field blocks exactly what it names --------------------
+
+def _trains(js):
+    return {tuple(leg.train_no for leg in j.legs if leg.trip_id) for j in js}
+
+
+def _trip_index(net, raw_trip):
+    return next(i for i, t in enumerate(net.trip_ids) if str(t).split(":", 1)[-1] == raw_trip)
+
+
+def test_exclusion_none_and_empty_equal_plain(toy_net):
+    from src.routing.exclusion import Exclusion
+    for access in ("X:A", "X:B"):
+        plain = _toy(toy_net, access)
+        assert _toy(toy_net, access, exclusion=None) == plain
+        assert _toy(toy_net, access, exclusion=Exclusion()) == plain
+    assert not Exclusion() and Exclusion(no_board={"X:A"})
+    assert hash(Exclusion(no_board=["X:A"])) == hash(Exclusion(no_board={"X:A"}))
+
+
+def test_exclusion_no_alight(toy_net):
+    from src.routing.exclusion import Exclusion
+    assert _trains(_toy(toy_net, "X:A")) == {("11", "22"), ("41",)}
+    # cannot leave 11 at B → only the direct 41; alighting at C is untouched
+    assert _trains(_toy(toy_net, "X:A", exclusion=Exclusion(no_alight={"X:B"}))) == {("41",)}
+    assert _toy(toy_net, "X:A", exclusion=Exclusion(no_alight={"X:C"})) == []
+
+
+def test_exclusion_no_board(toy_net):
+    from src.routing.exclusion import Exclusion
+    # 11 may still alight at B, but nothing may board there → only the direct 41
+    assert _trains(_toy(toy_net, "X:A", exclusion=Exclusion(no_board={"X:B"}))) == {("41",)}
+    assert _toy(toy_net, "X:A", exclusion=Exclusion(no_board={"X:A"})) == []
+    # boarding at A is untouched by a ban at C
+    assert _trains(_toy(toy_net, "X:A", exclusion=Exclusion(no_board={"X:C"}))) == {("11", "22"), ("41",)}
+
+
+def test_exclusion_banned_trips(toy_net):
+    from src.routing.exclusion import Exclusion
+    assert _trains(_toy(toy_net, "X:B")) == {("21",), ("22",)}
+    b1 = _trip_index(toy_net, "b1")
+    assert _trains(_toy(toy_net, "X:B", exclusion=Exclusion(banned_trips={b1}))) == {("22",)}
+    b2 = _trip_index(toy_net, "b2")
+    assert _trains(_toy(toy_net, "X:A", exclusion=Exclusion(banned_trips={b2}))) == {("41",)}
+
+
+def test_exclusion_banned_routes(toy_net):
+    from src.routing.exclusion import Exclusion
+    assert _trains(_toy(toy_net, "X:A", exclusion=Exclusion(banned_routes={"X:R4"}))) == {("11", "22")}
+    assert _trains(_toy(toy_net, "X:A", exclusion=Exclusion(banned_routes={"X:R2"}))) == {("41",)}
+
+
+def test_exclusion_banned_footpaths(toy_net):
+    from src.routing.exclusion import Exclusion
+    assert _toy(toy_net, "X:A", exclusion=Exclusion(banned_footpaths={("X:C", "DEST:Z")})) == []
+    # a footpath not on any journey changes nothing
+    assert _toy(toy_net, "X:A", exclusion=Exclusion(banned_footpaths={("X:A", "X:C")})) == _toy(toy_net, "X:A")
+
+
+def test_exclusion_never_mutates_network(toy_net):
+    import numpy as np
+
+    from src.routing.exclusion import Exclusion
+    _toy(toy_net, "X:A")
+    names = ("dep", "arr", "board_ok", "alight_ok", "tr_from", "tr_to")
+    before = {k: np.array(getattr(toy_net, k)) for k in names}
+    prep = toy_net.__dict__["_raptor_prep"]
+    snap = (repr(prep.p_board), repr(prep.p_alight), repr(prep.foot), repr(prep.stop_routes))
+    _toy(toy_net, "X:A", exclusion=Exclusion(no_board={"X:B"}, no_alight={"X:B"}, banned_routes={"X:R4"},
+                                             banned_trips={0}, banned_footpaths={("X:C", "DEST:Z")}))
+    assert all(np.array_equal(before[k], getattr(toy_net, k)) for k in names)
+    assert toy_net.__dict__["_raptor_prep"] is prep
+    assert snap == (repr(prep.p_board), repr(prep.p_alight), repr(prep.foot), repr(prep.stop_routes))
+    assert _trains(_toy(toy_net, "X:A")) == {("11", "22"), ("41",)}
+
+
+def test_exclusion_unknown_ids_ignored(toy_net, caplog):
+    from src.routing.exclusion import Exclusion
+    js = _toy(toy_net, "X:A", exclusion=Exclusion(no_board={"X:NOPE"}, banned_routes={"X:R99"}))
+    assert _trains(js) == {("11", "22"), ("41",)}
+    assert "not in the network" in caplog.text

@@ -11,6 +11,8 @@ from datetime import date
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
+from src.routing.exclusion import Exclusion
+
 # --- Paths -------------------------------------------------------------------
 # Data is git-ignored, so worktrees have none. Point CROSSING_DATA_DIR at the
 # main checkout's data/ when running from a worktree.
@@ -191,6 +193,24 @@ ROUTER_ACCESS_STATIONS: tuple[str, ...] = ("CM", "ST", "RT", "SE", "NP")
 # (hard-coded station_options, kept as the regression reference).
 OPTION_SOURCES: tuple[str, ...] = ("router", "safety_net")
 DEFAULT_OPTION_SOURCE = "router"  # 2.4 gate: GO (eval/router_validation.md)
+
+# --- Exclusion runs (Phase 3.1) ------------------------------------------------
+# Per access station the router runs once plain and once per exclusion below, so
+# asset-avoiding journeys that profile pruning always drops reach the scorer.
+# AVOID_PENN_NRT is a proxy: no ride may start or end at NY Penn. Assumption:
+# every NJT revenue train through the North River tunnels stops at NY Penn (no
+# NJT revenue service runs through to Sunnyside / Queens), so banning NY Penn
+# bans the tunnels too. PATH uses its own tunnels and is not affected. The
+# exposure tagger cross-checks every flagged row independently (alternatives.md).
+AVOID_PENN_NRT = Exclusion(no_alight={"NJT:NY"}, no_board={"NJT:NY"})
+# name → Exclusion. A key only an exclusion run produces gets the flag
+# f"{ALT_FLAG_PREFIX}{name}".
+ROUTER_EXCLUSIONS: dict[str, Exclusion] = {"penn_nrt": AVOID_PENN_NRT}
+ALT_FLAG_PREFIX = "alt_avoids:"
+# Fare lookup: platform-level stop codes priced as their fare station. Secaucus
+# Junction is one fare station; TS (lower level, Main/Bergen/Pascack to Hoboken)
+# is priced as SE. Parking for an SE → TS alternative is SE parking (access station).
+FARE_STATION_ALIAS: dict[str, str] = {"TS": "SE"}
 
 
 def network_npz(service_date: date) -> Path:

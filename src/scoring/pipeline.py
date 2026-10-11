@@ -20,7 +20,7 @@ from src.contracts import ScoredOption
 from src.gtfs import GtfsFeed, load_feed, stop_pairs
 from src.pricing.exposure import InfraIndex, index_infra, load_infra, tag_candidate
 from src.pricing.pricer import PriceTables, load_price_tables, price_candidate
-from src.routing.adapter import router_options
+from src.routing.adapter import route_all
 from src.routing.network import Network, load_transfers
 from src.safety_net.candidates import Option, build_candidates, station_options, to_utc
 from src.scoring.drive import index_drive_cache, load_drive_cache, lookup
@@ -40,13 +40,19 @@ class DemoData:
 
     def options_for(self, settings: Settings) -> dict[str, list[Option]]:
         """Hard-coded options, or router options for this deadline (cached on the network)."""
+        return self.options_and_flags(settings)[0]
+
+    def options_and_flags(self, settings: Settings) -> tuple[dict[str, list[Option]], dict[str, frozenset[str]]]:
+        """(options per label, flags per label). Flags mark exclusion-run alternatives."""
         if settings.source == "safety_net":
-            return self.options
+            return self.options, {}
         if settings.source != "router":
             raise ValueError(f"unknown option source {settings.source!r}")
         if self.network is None:
             raise FileNotFoundError("router network not built: python -m src.build.network")
-        return router_options(self.network, self.inputs.service_date, settings.deadline_s)
+        res = route_all(self.network, self.inputs.service_date, settings.deadline_s,
+                        exclusions=None if settings.exclusion_runs else {})
+        return res.options, res.label_flags
 
     @property
     def route_names(self) -> dict[str, str]:
@@ -75,9 +81,10 @@ def load_demo_data(service_date=config.DEMO_SERVICE_DATE) -> DemoData:
 
 def simulate(data: DemoData, settings: Settings) -> list[ScoredOption]:
     cache = data.inputs.drive_cache
+    options, label_flags = data.options_and_flags(settings)
     cands = build_candidates(None, None, lambda dest, t: lookup(cache, dest, t).best_guess_s,
                              data.inputs.service_date, settings.deadline_s, settings.margin_s,
-                             options=data.options_for(settings), source=settings.source)
+                             options=options, source=settings.source, label_flags=label_flags)
     cands = [tag_candidate(price_candidate(c, data.tables, cache, settings.mpg), data.infra,
                            data.route_names) for c in cands]
     return score_all(cands, data.inputs, settings)

@@ -61,6 +61,65 @@ DRIVE_CACHE_PARQUET = ARTIFACTS_DIR / "drive_cache.parquet"
 ROUTES_RAW_DIR = DATA_DIR / "cache" / "routes_raw"  # one JSON per API call; the real cache
 ALERTS_CACHE_JSON = ARTIFACTS_DIR / "alerts_cache.json"
 
+# --- Alerts (3.2a) -------------------------------------------------------------
+# Gemini extraction is offline: replay reads the tracked cache only (missing key =
+# error). Live calls only with ALERTS_LIVE = True (or --live) and the key in env / .env.
+ALERTS_LIVE = False
+GEMINI_API_KEY_ENV = "GEMINI_AI_KEY"
+GEMINI_MODEL_ID = "gemini-2.5-flash"
+GEMINI_API_URL = "https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
+GEMINI_TIMEOUT_S = 60
+ALERT_PROMPT_VERSION = "v1"  # bump on any prompt or schema change (part of the cache key)
+GEMINI_CACHE_JSONL = REPO_ROOT / "data" / "alerts" / "gemini_cache.jsonl"  # tracked
+ALERT_LABEL_CHECK_MD = REPO_ROOT / "eval" / "alert_label_check.md"
+ALERT_EXTRACTION_MD = REPO_ROOT / "eval" / "alert_extraction.md"
+ALERT_TIME_TOL_S = 5 * 60  # message clock time vs GTFS stop time (train verification)
+
+# Canonical NJT rail line names (customer-facing) → GTFS route_id(s) of the new
+# timetable feed. Main Line and Bergen County Line share GTFS route 5; light rail
+# (4, 13, 17) is out of scope.
+LINE_NAME_TO_ROUTES: dict[str, tuple[str, ...]] = {
+    "Atlantic City Rail Line": ("1",),
+    "Montclair-Boonton Line": ("2", "3"),
+    "Main Line": ("5",),
+    "Bergen County Line": ("5",),
+    "Port Jervis Line": ("6",),
+    "Morris & Essex Line": ("7",),
+    "Gladstone Branch": ("8",),
+    "Meadowlands Rail Line": ("9",),
+    "Northeast Corridor Line": ("10",),
+    "North Jersey Coast Line": ("11", "12"),
+    "Pascack Valley Line": ("14",),
+    "Princeton Shuttle": ("15",),
+    "Raritan Valley Line": ("16",),
+}
+# Other spellings seen in messages / labels → canonical name(s). Case-insensitive.
+LINE_ALIASES: dict[str, tuple[str, ...]] = {
+    "ME Line": ("Morris & Essex Line",),
+    "M and E": ("Morris & Essex Line",),
+    "M&E": ("Morris & Essex Line",),
+    "Morris and Essex Line": ("Morris & Essex Line",),
+    "Northeast Corridor": ("Northeast Corridor Line",),
+    "NEC": ("Northeast Corridor Line",),
+    "NJCL": ("North Jersey Coast Line",),
+    "Main/Bergen County Line": ("Main Line", "Bergen County Line"),
+    "Main and Bergen Line": ("Main Line", "Bergen County Line"),
+    "MBPJ": ("Main Line", "Bergen County Line", "Port Jervis Line"),
+    "Montclair Boonton Line": ("Montclair-Boonton Line",),
+    "Gladstone Line": ("Gladstone Branch",),
+    "Raritan Valley": ("Raritan Valley Line",),
+    "Pascack Valley": ("Pascack Valley Line",),
+    "ACRL": ("Atlantic City Rail Line",),
+}
+# Station names as written in messages → NJT stop_code (else GTFS stop_name match).
+ALERT_STATION_ALIASES: dict[str, str] = {
+    "PSNY": "NY", "PENN STATION NEW YORK": "NY", "NEW YORK PENN STATION": "NY",
+    "NEW YORK PENN": "NY", "NY PENN": "NY", "NEW YORK": "NY",
+    "NEWARK PENN": "NP", "NEWARK PENN STATION": "NP", "SECAUCUS": "SE",
+    "JERSEY AVE": "JA", "JERSEY AVENUE": "JA", "TRENTON": "TR",
+    "BROAD ST": "ND", "NEWARK BROAD STREET": "ND",
+}
+
 # --- Time --------------------------------------------------------------------
 LOCAL_TZ = ZoneInfo("America/New_York")
 SECONDS_PER_DAY = 86_400

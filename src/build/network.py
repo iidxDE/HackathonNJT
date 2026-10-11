@@ -81,8 +81,8 @@ def build(service_date: date = config.DEMO_SERVICE_DATE) -> tuple[Network, str]:
     _check(e.get(("PATH:33rd Street", config.ROUTER_DEST_STOP))
            == config.TRANSFER_MIN_S["path_33st_to_penn_walk"],
            "transfers.csv 33rd St → Penn differs from config.TRANSFER_MIN_S")
-    _check(transfers.same_stop_s == config.TRANSFER_MIN_S["hoboken_njt_to_path"],
-           "same-stop transfer ≠ scorer transfer buffer")
+    _check(transfers.same_stop_s == config.SAME_STOP_TRANSFER_S,
+           "transfers.csv same-stop minimum ≠ config.SAME_STOP_TRANSFER_S")
 
     net = build_network([njt, path], transfers, service_date, config.ROUTER_VIRTUAL_PREFIXES)
     not_fifo = assert_fifo(net)
@@ -170,7 +170,7 @@ def report(net: Network, njt, path, transfers, service_date: date) -> str:
         "- Every transfers.csv stop exists after the parent collapse (`DEST:` stops are virtual); "
         "every `stations_scope.csv` station maps to an NJT stop; NJT stop_code unique.",
         "- transfers.csv agrees with `config.TRANSFER_MIN_S` (HB → PATH, 33rd St → Penn) and the "
-        "same-stop minimum equals the scorer's transfer buffer.",
+        "same-stop minimum equals `config.SAME_STOP_TRANSFER_S`.",
         "- NJT:NY and PATH:33rd Street are served by at least one pattern.",
         "",
         "## PATH stop IDs",

@@ -85,6 +85,7 @@ class Leg:
     gtfs_line: str | None = None  # GTFS route_id
     direction: int | None = None  # GTFS direction_id
     toward_ny: bool | None = None  # trip terminal in config.TOWARD_NY_TERMINALS (pool key)
+    terminal: str | None = None  # rail only: the trip's last stop (same stop ids as from/to)
 
     def __post_init__(self) -> None:
         _require_utc("sched_dep", self.sched_dep)
@@ -96,8 +97,8 @@ class Leg:
                     or self.toward_ny is None):
                 raise ValueError("Rail legs need train_number, gtfs_line, direction and toward_ny")
             object.__setattr__(self, "train_number", normalize_train_number(self.train_number))
-        elif self.train_number is not None:
-            raise ValueError(f"train_number is rail-only, got it on a {self.mode.value} leg")
+        elif self.train_number is not None or self.terminal is not None:
+            raise ValueError(f"train_number / terminal are rail-only, got one on a {self.mode.value} leg")
 
     @property
     def duration_s(self) -> float:

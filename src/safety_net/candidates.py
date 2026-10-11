@@ -24,7 +24,7 @@ import pandas as pd
 
 from src import config
 from src.contracts import Candidate, Leg, LegMode
-from src.gtfs import GtfsFeed, stop_pairs
+from src.gtfs import GtfsFeed, gtfs_to_utc, stop_pairs
 
 DIRECT_STATIONS: tuple[str, ...] = ("CM", "ST", "RT", "SE", "NP")
 NY = config.DESTINATION_STATION
@@ -44,9 +44,9 @@ Option = tuple[Leg, ...]
 
 
 def to_utc(service_date: date, gtfs_s: float) -> datetime:
-    """GTFS seconds since service-day midnight (local wall clock) -> aware UTC datetime."""
-    local = pd.Timestamp(service_date) + pd.Timedelta(seconds=float(gtfs_s))
-    return local.tz_localize(config.LOCAL_TZ).tz_convert("UTC").to_pydatetime()
+    """GTFS seconds on the service day -> aware UTC datetime (local noon − 12 h + s,
+    the same rule as routing.adapter.gtfs_utc and scorer.local_epoch)."""
+    return gtfs_to_utc(service_date, gtfs_s, config.LOCAL_TZ)
 
 
 def _rail_leg(row, service_date: date, from_stop: str, to_stop: str) -> Leg:
@@ -54,7 +54,7 @@ def _rail_leg(row, service_date: date, from_stop: str, to_stop: str) -> Leg:
                to_utc(service_date, row.dep_s), to_utc(service_date, row.arr_s),
                train_number=row.trip_short_name, gtfs_line=str(row.route_id),
                direction=int(row.direction_id),
-               toward_ny=row.terminal in config.TOWARD_NY_TERMINALS)
+               toward_ny=row.terminal in config.TOWARD_NY_TERMINALS, terminal=row.terminal)
 
 
 def direct_options(njt: GtfsFeed, service_date: date, station: str) -> list[Option]:

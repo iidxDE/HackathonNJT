@@ -97,7 +97,8 @@ def build_stamp() -> str:
 
     try:
         head = git("rev-parse", "--short", "HEAD")
-        dirty = git("status", "--porcelain", "--untracked-files=no")
+        # Generated reports under eval/ do not count: regenerating one must not mark the next dirty.
+        dirty = git("status", "--porcelain", "--untracked-files=no", "--", ".", ":(exclude)eval")
         return (head or "unknown") + ("-dirty" if dirty else "")
     except Exception:  # noqa: BLE001 — a stamp must never break the app
         return "unknown"

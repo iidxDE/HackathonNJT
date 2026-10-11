@@ -41,7 +41,8 @@ def _stamp() -> str:
     try:
         h = subprocess.run(["git", "rev-parse", "--short", "HEAD"], capture_output=True, text=True,
                            cwd=config.REPO_ROOT, check=True).stdout.strip()
-        dirty = subprocess.run(["git", "status", "--porcelain", "--untracked-files=no"],
+        dirty = subprocess.run(["git", "status", "--porcelain", "--untracked-files=no", "--", ".",
+                                ":(exclude)eval"],  # generated reports do not count
                                capture_output=True, text=True, cwd=config.REPO_ROOT).stdout.strip()
         return h + ("-dirty" if dirty else "")
     except (OSError, subprocess.CalledProcessError):

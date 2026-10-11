@@ -277,9 +277,9 @@ def _clock_diff_s(gtfs_s: int, clock_s: int) -> int:
 
 
 def absolute_time(service_date: date, gtfs_s: int) -> pd.Timestamp:
-    """Local midnight of the service date + GTFS seconds, as an absolute UTC instant."""
-    midnight = pd.Timestamp(service_date).tz_localize(config.LOCAL_TZ)
-    return (midnight + pd.Timedelta(seconds=gtfs_s)).tz_convert("UTC")
+    """GTFS time → absolute UTC instant, by the project's one rule (gtfs.gtfs_to_utc:
+    local noon − 12 h + seconds; equals local midnight + seconds except on DST-change days)."""
+    return pd.Timestamp(gtfs.gtfs_to_utc(service_date, gtfs_s, config.LOCAL_TZ))
 
 
 def _pubdate(row: dict[str, str]) -> pd.Timestamp | None:
@@ -328,8 +328,8 @@ def verify(idx: RailIndex, row: dict[str, str], demo_date: date = config.DEMO_SE
 
     Candidates: trips numbered like the message's train on the service days around the
     pubdate. A candidate matches if every named stop's clock time agrees within
-    ALERT_TIME_TOL_S and its absolute time at the first named stop (local midnight of its
-    service date + GTFS seconds) lies in [pubdate − 6 h, pubdate + 18 h]; the closest wins.
+    ALERT_TIME_TOL_S and its absolute time at the first named stop (absolute_time:
+    gtfs.gtfs_to_utc of its service date and GTFS seconds) lies in [pubdate − 6 h, pubdate + 18 h]; the closest wins.
     """
     out = {c: "" for c in DERIVED_COLUMNS}
     train, segment = primary_train(row["msg_text"])
@@ -451,8 +451,8 @@ def report(rows: list[dict[str, str]], reasons: dict[str, str]) -> str:
         f"`data/reference/alert_samples.csv` ({len(df)} messages, {n_rev} reviewed) and the rail GTFS. "
         "Derived columns come from GTFS; they never overwrite a `lbl_*` value. Candidates: trips with the "
         "message's train number on the service days around the pubdate; every named stop's clock time must match "
-        f"within {config.ALERT_TIME_TOL_S // 60} min, and the trip's absolute time at the first named stop (local "
-        "midnight of its service date + GTFS seconds) must lie in [pubdate − "
+        f"within {config.ALERT_TIME_TOL_S // 60} min, and the trip's absolute time at the first named stop (GTFS → UTC, "
+        "local noon − 12 h + seconds) must lie in [pubdate − "
         f"{config.ALERT_PUB_WINDOW_H[0]} h, pubdate + {config.ALERT_PUB_WINDOW_H[1]} h]; the closest wins. "
         f"on_demo_date = Y only for the same route within {config.ALERT_DEMO_REUSE_TOL_S // 60} min at the named "
         "stop on the demo date (\"N (number reused)\" otherwise; \"N (unverified)\" when the message's trip "

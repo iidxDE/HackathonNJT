@@ -37,6 +37,7 @@ from src.contracts import (AssumptionFlag, Candidate, FallbackLevel, LegMode, Po
                            ScoredOption)
 from src.gtfs import gtfs_to_utc
 from src.scoring.drive import DestDrive, DriveEstimate, index_drive_cache, lookup
+from src.scoring.alerts import NO_ALERTS, AlertSet
 from src.scoring.pools import PoolIndex, index_pools, period_of, sample
 
 
@@ -57,6 +58,7 @@ class Settings:
     drive_spread: bool = True  # False = drive takes BEST_GUESS exactly
     source: str = config.DEFAULT_OPTION_SOURCE  # options: "router" or "safety_net"
     exclusion_runs: bool = True  # router: add config.ROUTER_EXCLUSIONS runs (False = router-v1)
+    alert_set: AlertSet = NO_ALERTS  # active alerts: exclusion composed into every router run
 
 
 @dataclass(frozen=True)

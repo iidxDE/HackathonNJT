@@ -94,8 +94,9 @@ python -m src.build.alerts_extract --live   # calls Gemini for uncached messages
   added; part of the platform walk may be counted twice.
 - SE parking: the pricer charges the cheapest SE lot (Lot 1), while the drive cache routes to ParkFast Secaucus
   Junction (noted in the cost breakdown).
-- The SE → HB fare is not in `njt_fares.csv`: the SE → TS → HB + PATH row is marked partial and is **not
-  ranked** ("cost incomplete"; partial rows never outrank complete ones).
+- The SE → HB fare is not in `njt_fares.csv` (no sourced value yet): the SE → TS → HB + PATH row is marked
+  partial and is **not ranked**. The app shows its $/day as a lower bound ("≥ $X (missing: fare)") and its
+  risk-adjusted cost as "—"; partial rows never outrank complete ones.
 - On-time grace (`ON_TIME_GRACE_S`) is applied by the scorer only; the planner and router use the bare
   deadline. No effect at the current 0 s.
 - A rail leg built without `terminal` falls back to "alights at NY / HB on a toward-NY trip" to decide
@@ -110,5 +111,10 @@ python -m src.build.alerts_extract --live   # calls Gemini for uncached messages
   disruption, so `penn_disruption` recall is untested.
 - Evaluation is per message: kind, cause, delay, cut and direction come from the first alert that sets them,
   lines and trains are the union. A message that yields several alerts is not scored alert by alert.
-- Alerts are extracted and evaluated but not yet shown on, or applied to, the ranked options. Alert scenarios
-  (alert → `Exclusion` → re-route via `route_all(base=...)`) are roadmap; the router side (`base`) exists.
+- Alerts in the app (sidebar "Disruption"): two inputs only. "Penn suspended" is a hand-built scenario
+  (label *scenario*, no Gemini) mapped to the NY Penn / North River tunnel exclusion and re-routed via
+  `route_all(base=...)`; A017 is an archived message replayed from the Gemini cache (label *replayed*).
+  Only `penn_disruption` changes the options. Every other alert kind is display only, with a direction /
+  scope gate ("not affecting your trip"); delay shifts and train bans from alerts are not applied yet.
+- The scope gate compares the stations an alert names with the stations the options board or alight at
+  (Hoboken and NY Penn ignored as reference points); intermediate stops are not checked.

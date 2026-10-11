@@ -22,6 +22,7 @@ import streamlit as st  # noqa: E402
 from src import config  # noqa: E402
 from src.contracts import InfraAsset, ScoredOption  # noqa: E402
 from src.scoring import pipeline  # noqa: E402
+from src.scoring.alerts import ALERT_CHOICES  # noqa: E402
 from src.scoring.scorer import Settings, reprice  # noqa: E402
 
 st.set_page_config(page_title="Crossing", layout="wide")
@@ -34,7 +35,7 @@ EXPOSURE_LABELS = {
     InfraAsset.PATH_TUNNELS: "PATH tunnels",
 }
 FLAG_LABELS = {
-    "infeasible": "no train meets deadline", "partial": "cost incomplete (not ranked)", "not_priced": "cost not priced",
+    "infeasible": "no train meets deadline", "partial": "cost incomplete", "not_priced": "cost not priced",
     "fills_early": "lot fills early", "no_daily_parking": "no daily parking data",
     "parking_rate_unknown": "parking rate unknown", "parking_unavailable": "no non-resident parking", "l4_pool": "no delay data",
     "drive_variance_degenerate": "no drive spread", "exposure_varies": "exposure varies by train",
@@ -52,9 +53,11 @@ def demo_data() -> pipeline.DemoData:
 
 @st.cache_data(show_spinner=False, max_entries=64)
 def simulate(deadline_s: int, margin_s: int, mpg: float,
-             source: str = config.DEFAULT_OPTION_SOURCE) -> list[ScoredOption]:
-    return pipeline.simulate(demo_data(), Settings(deadline_s=deadline_s, margin_s=margin_s, mpg=mpg,
-                                                   source=source))
+             source: str = config.DEFAULT_OPTION_SOURCE, alert_id: str = "none") -> list[ScoredOption]:
+    """Cached per settings that change the simulation, including the alert set's id."""
+    d = demo_data()
+    return pipeline.simulate(d, Settings(deadline_s=deadline_s, margin_s=margin_s, mpg=mpg, source=source,
+                                         alert_set=d.alert_set(alert_id, deadline_s)))
 
 
 def hhmm(t) -> str:
@@ -99,6 +102,36 @@ def infeasible_reason(s: ScoredOption) -> str:
     return c.infeasible_reason or "no train meets the deadline"
 
 
+def is_partial(s: ScoredOption) -> bool:
+    return "partial" in s.flags and s.candidate.access_station != "DRIVE"
+
+
+def money_text(s: ScoredOption) -> str:
+    """$/day; a partial total is a lower bound with the missing items named."""
+    if s.candidate.access_station == "DRIVE":
+        return "cost not priced"
+    if is_partial(s) and s.candidate.costs is not None:
+        missing = [name for name, item in s.candidate.costs.items.items() if item.usd is None]
+        return f"≥ {usd(s.money_usd)} (missing: {', '.join(missing)})"
+    return usd(s.money_usd)
+
+
+def risk_text(s: ScoredOption) -> str:
+    return "—" if is_partial(s) else usd(s.gen_cost_usd)
+
+
+def delta_cols(s: ScoredOption, before: ScoredOption | None) -> dict[str, str]:
+    """Δ rank and Δ risk-adjusted $ against the no-alert run (same settings)."""
+    if "alert_unavailable" in s.flags:
+        return {"Δ rank": "unavailable", "Δ risk-adjusted $": "—"}
+    if before is None:
+        return {"Δ rank": "new", "Δ risk-adjusted $": "—"}
+    d_rank = "—" if s.rank is None or before.rank is None else f"{s.rank - before.rank:+d}"
+    d_usd = ("—" if is_partial(s) or is_partial(before) or s.gen_cost_usd is None or before.gen_cost_usd is None
+             else f"{s.gen_cost_usd - before.gen_cost_usd:+,.2f}")
+    return {"Δ rank": d_rank, "Δ risk-adjusted $": d_usd}
+
+
 def row_order(s: ScoredOption) -> tuple:
     if "infeasible" in s.flags:
         return (3, s.candidate_id)
@@ -117,7 +150,8 @@ def latest_variant(s: ScoredOption) -> ScoredOption:
     return s.variants[0] if s.variants else s
 
 
-def ranked_table(scored: list[ScoredOption]) -> pd.DataFrame:
+def ranked_table(scored: list[ScoredOption], before: dict[str, ScoredOption] | None = None) -> pd.DataFrame:
+    """One row per station option; with `before` (the no-alert run) adds Δ rank / Δ risk-adjusted $."""
     rows = []
     for s in sorted(scored, key=row_order):
         c = s.candidate
@@ -134,8 +168,9 @@ def ranked_table(scored: list[ScoredOption]) -> pd.DataFrame:
                                else variant_line(latest) + " (latest)"),
             "On time (of 100)": "—" if s.p_on_time is None else str(round(100 * s.p_on_time)),
             "Arrival p50 / p90": "—" if s.arrival_p50 is None else f"{hhmm(s.arrival_p50)} / {hhmm(s.arrival_p90)}",
-            "$/day": "cost not priced" if reference else usd(s.money_usd),
-            "Risk-adjusted $": usd(s.gen_cost_usd),
+            "$/day": money_text(s),
+            "Risk-adjusted $": risk_text(s),
+            **(delta_cols(s, before.get(s.candidate_id)) if before is not None else {}),
             "Schedule-only rank": "—" if infeasible or s.sched_rank is None else str(s.sched_rank),
             "Depends on": ", ".join(EXPOSURE_LABELS[a] for a in sorted(c.exposure or (), key=lambda a: a.value))
                           or ("road crossing (not modeled)" if reference else "—"),
@@ -192,6 +227,9 @@ with st.sidebar:
     margin_min = st.number_input("Safety margin (min)", min_value=0, max_value=30,
                                  value=config.SAFETY_MARGIN_S // 60, step=1)
     mpg = st.number_input("Car fuel economy (mpg)", min_value=5.0, value=config.DEFAULT_MPG, step=1.0)
+    alert_id = st.selectbox("Disruption", list(ALERT_CHOICES), format_func=ALERT_CHOICES.get,
+                            help="Scenario = hand-built alert; replayed = archived NJT message, Gemini output "
+                                 "from the cache (no live call).")
     source = st.radio("Options from", config.OPTION_SOURCES,
                       index=config.OPTION_SOURCES.index(config.DEFAULT_OPTION_SOURCE),
                       format_func=lambda s: {"router": "Router (RAPTOR)",
@@ -201,11 +239,17 @@ with st.sidebar:
                "destination = NY Penn.")
     st.caption(f"Monte Carlo: N = {config.N_SAMPLES}, seed {config.DEFAULT_SEED}.")
 
-settings = Settings(deadline_s=deadline.hour * 3600 + deadline.minute * 60, vot_usd_per_h=vot,
-                    hard_penalty_usd=penalty, margin_s=int(margin_min) * 60, mpg=mpg, source=source)
 data = demo_data()
-scored = reprice(simulate(settings.deadline_s, settings.margin_s, settings.mpg, settings.source), settings,
+deadline_s = deadline.hour * 3600 + deadline.minute * 60
+alert_set = data.alert_set(alert_id, deadline_s)
+settings = Settings(deadline_s=deadline_s, vot_usd_per_h=vot, hard_penalty_usd=penalty,
+                    margin_s=int(margin_min) * 60, mpg=mpg, source=source, alert_set=alert_set)
+scored = reprice(simulate(settings.deadline_s, settings.margin_s, settings.mpg, settings.source, alert_id), settings,
                  data.inputs)
+before = None
+if alert_id != "none":  # the cached no-alert run, same settings
+    before = {s.candidate_id: s for s in reprice(simulate(settings.deadline_s, settings.margin_s, settings.mpg,
+                                                          settings.source, "none"), settings, data.inputs)}
 
 # --- Main view ---------------------------------------------------------------
 st.title("Crossing: Chatham-area commute to NY Penn")
@@ -213,6 +257,9 @@ st.info("Reliability is estimated from about one weekday of observed NJ Transit 
         "Estimates are rough and improve as the archive grows.")
 st.warning("Delay history predates the Portal cutover; Hoboken/PATH crowding and PATH delays are not modeled "
            "(optimistic for Hoboken options).")
+
+for n in alert_set.notices:
+    (st.error if n.affects_trip else st.info)(f"**Disruption ({n.label}):** {n.text} → {n.effect}")
 
 best = next((s for s in scored if s.rank == 1 and "infeasible" not in s.flags), None)
 if best:
@@ -226,13 +273,13 @@ if best:
 else:
     st.warning("No option can be ranked for these settings.")
 
-no_train = [s for s in scored if not s.candidate.legs]
-scored = [s for s in scored if s.candidate.legs]  # rows without a train become one notice
+no_train = [s for s in scored if not s.candidate.legs and "alert_unavailable" not in s.flags]
+scored = [s for s in scored if s not in no_train]  # cutover rows without a train become one notice
 if no_train:
     st.info(f"{NOTICE}: no one-seat ride to NY Penn from "
             f"{', '.join(s.candidate.access_station for s in sorted(no_train, key=lambda s: s.candidate_id))}. "
             "Their rail option is Hoboken + PATH (rows below).")
-table = ranked_table(scored)
+table = ranked_table(scored, before)
 st.dataframe(style(table), hide_index=True, width="stretch")
 st.caption(r"Highlighted: risk changes this option's rank or train. Grey: not an option (reason in Flags). "
            r"The chosen train is the cheapest of the last 3 on-time trains on risk-adjusted cost; the timetable plan "
@@ -252,7 +299,7 @@ for s in sorted(scored, key=row_order):
                 "Plan": "latest (timetable)" if v.candidate.variant == 0 else f"{v.candidate.variant} earlier",
                 "Leave home": hhmm(v.candidate.leave_home),
                 "On time (of 100)": "—" if v.p_on_time is None else str(round(100 * v.p_on_time)),
-                "Risk-adjusted $": usd(v.gen_cost_usd),
+                "Risk-adjusted $": risk_text(v),
                 "Chosen": "yes" if v.candidate.variant == c.variant else "",
             } for v in s.variants]), hide_index=True)
         st.markdown("**Cost breakdown (per commuting day)**")
@@ -290,7 +337,8 @@ fmt = lambda o: f"{o[0]} on train {o[1]}" if o else "—"  # noqa: E731
 st.write(f"With these settings the top option **{'changes' if risk != sched else 'does not change'}** when "
          f"risk is priced in: {fmt(risk)} vs schedule-only {fmt(sched)}.")
 
-sw = pipeline.sweep(data, settings, simulate_fn=lambda x: simulate(x.deadline_s, x.margin_s, x.mpg, x.source))
+sw = pipeline.sweep(data, settings,
+                    simulate_fn=lambda x: simulate(x.deadline_s, x.margin_s, x.mpg, x.source, alert_id))
 st.markdown("**Sweep** (current deadline, VOT and mpg; leave-home re-planned per margin; same code as "
             "eval/core_claim.md)")
 st.dataframe(sw.drop(columns=["p_on_time"]).rename(columns={

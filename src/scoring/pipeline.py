@@ -23,6 +23,7 @@ from src.pricing.pricer import PriceTables, load_price_tables, price_candidate
 from src.routing.adapter import route_all
 from src.routing.network import Network, load_transfers
 from src.safety_net.candidates import Option, build_candidates, station_options, to_utc
+from src.scoring.alerts import NO_ALERTS, AlertSet, build_alert_set
 from src.scoring.drive import index_drive_cache, load_drive_cache, lookup
 from src.scoring.pools import index_pools, load_pools
 from src.scoring.scorer import ScoringInputs, Settings, reprice, score_all
@@ -51,8 +52,18 @@ class DemoData:
         if self.network is None:
             raise FileNotFoundError("router network not built: python -m src.build.network")
         res = route_all(self.network, self.inputs.service_date, settings.deadline_s,
-                        exclusions=None if settings.exclusion_runs else {})
+                        exclusions=None if settings.exclusion_runs else {}, base=settings.alert_set.exclusion)
         return res.options, res.label_flags
+
+    def alert_set(self, alert_id: str, deadline_s: int = config.DEMO_DEADLINE_S) -> AlertSet:
+        """AlertSet for a UI choice ("none", "penn_scenario", an archived alert_id); cached per id."""
+        cache = self.__dict__.setdefault("_alert_sets", {})
+        if (alert_id, deadline_s) not in cache:
+            base = self.options_and_flags(Settings(deadline_s=deadline_s))[0] if self.network else self.options
+            name_to_code = dict(zip(self.njt.stops["stop_name"].str.upper().str.replace(".", "", regex=False),
+                                    self.njt.stops["stop_code"].astype(str)))
+            cache[(alert_id, deadline_s)] = build_alert_set(alert_id, base, name_to_code)
+        return cache[(alert_id, deadline_s)]
 
     @property
     def route_names(self) -> dict[str, str]:
@@ -85,9 +96,23 @@ def simulate(data: DemoData, settings: Settings) -> list[ScoredOption]:
     cands = build_candidates(None, None, lambda dest, t: lookup(cache, dest, t).best_guess_s,
                              data.inputs.service_date, settings.deadline_s, settings.margin_s,
                              options=options, source=settings.source, label_flags=label_flags)
+    if settings.alert_set.exclusion:
+        cands = mark_unavailable(cands, data.options_and_flags(replace(settings, alert_set=NO_ALERTS))[0],
+                                 settings.alert_set)
     cands = [tag_candidate(price_candidate(c, data.tables, cache, settings.mpg), data.infra,
                            data.route_names) for c in cands]
     return score_all(cands, data.inputs, settings)
+
+
+def mark_unavailable(cands, no_alert_options: dict[str, list[Option]], alert_set: AlertSet):
+    """Rows that have trains without the alert and none with it: infeasible, alert named."""
+    out = []
+    for c in cands:
+        if c.infeasible and not c.legs and no_alert_options.get(c.label):
+            c = replace(c, infeasible_reason=f"unavailable under the alert: {alert_set.name}",
+                        flags=c.flags | {"alert_unavailable"})
+        out.append(c)
+    return out
 
 
 def evaluate(data: DemoData, settings: Settings) -> list[ScoredOption]:

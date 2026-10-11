@@ -92,6 +92,7 @@ def test_np_3224_round_trips_exactly(both):
     leg = r[0]
     assert (leg.from_stop, leg.to_stop, leg.gtfs_line, leg.direction, leg.toward_ny) == \
            ("NP", "NY", "11", h[0].direction, True)
+    assert leg.terminal == h[0].terminal == "NY"  # passed through for intermediate_alight
     assert (leg.sched_dep, leg.sched_arr) == (to_utc(D, 8 * 3600 + 22 * 60), to_utc(D, 8 * 3600 + 42 * 60))
 
 

@@ -22,10 +22,9 @@ from collections import Counter
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta
 
-import pandas as pd
-
 from src import config
 from src.contracts import Leg, LegMode
+from src.gtfs import gtfs_to_utc
 from src.routing.network import Network
 from src.routing.raptor import Journey, ProfileStats, route_profile
 from src.safety_net.candidates import (DIRECT_STATIONS, HB, HB_PATH_STATIONS, NY, PATH_33, PATH_HB,
@@ -48,9 +47,7 @@ class AdapterReport:
 
 def gtfs_utc(service_date: date, seconds: float) -> datetime:
     """GTFS time → aware UTC: local noon on service_date − 12 h + seconds."""
-    noon = pd.Timestamp(service_date).replace(hour=12).tz_localize(config.LOCAL_TZ)
-    return (noon - pd.Timedelta(hours=12) + pd.Timedelta(seconds=float(seconds))
-            ).tz_convert("UTC").to_pydatetime()
+    return gtfs_to_utc(service_date, seconds, config.LOCAL_TZ)
 
 
 def leg_stop(stop: str) -> str:
@@ -107,7 +104,7 @@ def journey_to_option(j: Journey, net: Network, service_date: date,
             terminal = leg_stop(net.terminal_of_pattern(p))
             legs.append(Leg(mode, frm, to, gtfs_utc(service_date, jl.dep), gtfs_utc(service_date, jl.arr),
                             train_number=jl.train_no, gtfs_line=route, direction=direction,
-                            toward_ny=terminal in config.TOWARD_NY_TERMINALS))
+                            toward_ny=terminal in config.TOWARD_NY_TERMINALS, terminal=terminal))
         else:
             legs.append(Leg(mode, frm, to, gtfs_utc(service_date, jl.dep), gtfs_utc(service_date, jl.arr),
                             gtfs_line=route))

@@ -7,7 +7,7 @@ midnight and may exceed 86,400.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import date
+from datetime import date, datetime, tzinfo
 from pathlib import Path
 
 import numpy as np
@@ -43,6 +43,17 @@ def gtfs_time_to_seconds(times: pd.Series) -> pd.Series:
         return pd.Series(np.nan, index=times.index)
     h, m, s = (pd.to_numeric(parts[i], errors="coerce") for i in range(3))
     return h * 3600 + m * 60 + s
+
+
+def gtfs_to_utc(service_date: date, seconds: float, tz: tzinfo) -> datetime:
+    """GTFS time → aware UTC datetime: local noon on service_date − 12 h + seconds.
+
+    The GTFS definition of a service-day time; equals local midnight + seconds
+    except on DST-change days. The single conversion used at request time.
+    """
+    noon = pd.Timestamp(service_date).replace(hour=12).tz_localize(tz)
+    return (noon - pd.Timedelta(hours=12) + pd.Timedelta(seconds=float(seconds))
+            ).tz_convert("UTC").to_pydatetime()
 
 
 def load_feed(feed_dir: Path) -> GtfsFeed:

@@ -18,7 +18,8 @@ Per draw i, vectorized over i (CLAUDE.md §4.8, Phase 1.5 spec):
 4. Hoboken + PATH: HB actual arrival + transfer → next scheduled PATH
    departure → 33rd St + egress walk. PATH runs to schedule (stated limitation).
 5. Drive all the way: arrival = leave_home + drive_i + garage walk.
-6. L_i = max(0, arrival_i − deadline) in minutes;
+6. L_i = min(max(0, arrival_i − deadline), late cap) in minutes, for every draw
+   (censored or not), so a train arriving after deadline + cap cannot change a cost;
    gen_cost = money + VOT × (deadline − leave_home) + mean(VOT × L + penalty × 1(L > 0)).
 """
 
@@ -34,6 +35,7 @@ import pandas as pd
 from src import config
 from src.contracts import (AssumptionFlag, Candidate, FallbackLevel, LegMode, PoolUsage,
                            ScoredOption)
+from src.gtfs import gtfs_to_utc
 from src.scoring.drive import DestDrive, DriveEstimate, index_drive_cache, lookup
 from src.scoring.pools import PoolIndex, index_pools, period_of, sample
 
@@ -67,8 +69,8 @@ class ScoringInputs:
     drive_cache: dict[str, DestDrive]
     path_schedule: np.ndarray  # (m, 2) epoch seconds (Hoboken dep, 33rd St arr), sorted by dep
     service_date: date = config.DEMO_SERVICE_DATE
-    # Same-stop rail → rail minimum; transfers.csv "*,*" row (= the HB → PATH buffer).
-    same_stop_transfer_s: int = config.TRANSFER_MIN_S["hoboken_njt_to_path"]
+    # Same-stop rail → rail minimum; transfers.csv "*,*" row (= config.SAME_STOP_TRANSFER_S).
+    same_stop_transfer_s: int = config.SAME_STOP_TRANSFER_S
 
     def __post_init__(self) -> None:
         if isinstance(self.pools, pd.DataFrame):
@@ -94,9 +96,8 @@ def triangular_ppf(u: np.ndarray, low: float, mode: float, high: float) -> np.nd
 
 
 def local_epoch(service_date: date, local_s: float) -> float:
-    """Epoch seconds of a local time of day (seconds since midnight) on service_date."""
-    local = pd.Timestamp(service_date) + pd.Timedelta(seconds=float(local_s))
-    return local.tz_localize(config.LOCAL_TZ).timestamp()
+    """Epoch seconds of a service-day time (local noon − 12 h + s, as gtfs.gtfs_to_utc)."""
+    return gtfs_to_utc(service_date, local_s, config.LOCAL_TZ).timestamp()
 
 
 def _ts(t: datetime) -> float:
@@ -154,6 +155,7 @@ def score_candidate(c: Candidate, inputs: ScoringInputs, settings: Settings,
         arr = np.full((n, len(options)), np.nan)
         sched_arr = np.array([_ts(o[-1].sched_arr) for o in options])
         option_usage: list[list[PoolUsage]] = []
+        second_pick: dict[int, np.ndarray] = {}  # rail → rail option → index into seconds per draw
         draws_by_leg: dict[tuple, tuple[np.ndarray, np.ndarray, PoolUsage]] = {}
 
         def draws_for(leg):
@@ -175,15 +177,16 @@ def score_candidate(c: Candidate, inputs: ScoringInputs, settings: Settings,
             if len(rails) == 2:
                 ready2 = rail_arr + _transfer_s(opt, rails[0], rails[1], inputs)
                 arr_k = np.full(n, np.nan)
-                for leg2 in seconds:
+                pick = np.full(n, -1)
+                for j, leg2 in enumerate(seconds):
                     if leg2.from_stop != rails[1].from_stop:
                         continue
-                    b2, a2, u2 = draws_for(leg2)
-                    ok = np.isnan(arr_k) & can_board(ready2, _ts(leg2.sched_dep), b2)
+                    b2, a2, _ = draws_for(leg2)
+                    ok = (pick < 0) & can_board(ready2, _ts(leg2.sched_dep), b2)
                     arr_k[ok] = _ts(leg2.sched_arr) + a2[ok]
-                    if leg2 == rails[1]:
-                        used.append(u2)
+                    pick[ok] = j
                 arr[:, k] = arr_k
+                second_pick[k] = pick
             elif any(leg.mode is LegMode.PATH for leg in opt):
                 arr[:, k] = _path_arrival(rail_arr, inputs.path_schedule)
                 assumption |= {AssumptionFlag.PATH_UNMEASURED, AssumptionFlag.PATH_DELAY_NOT_MODELED}
@@ -197,17 +200,28 @@ def score_candidate(c: Candidate, inputs: ScoringInputs, settings: Settings,
         arrival = arr_o[np.arange(n), first]
         censored = ~any_catch | np.isnan(arrival)
         chosen = order[first]
-        trains = np.array([_rails(o)[0].train_number for o in options])
-        taken = np.where(censored, "none", trains[chosen])
+        trains = np.array([_rails(o)[0].train_number for o in options], dtype=object)
+        label = trains[chosen].copy()
         for k in np.unique(chosen[~censored]):
-            usages.extend(option_usage[k])
+            usages.extend(u_ for u_ in option_usage[k] if u_ not in usages)
+        # Rail → rail: label "first+second" and record the pool of the second-leg train
+        # actually taken (which may be a later one than planned).
+        for k, pick in second_pick.items():
+            rows = (chosen == k) & ~censored
+            for j in np.unique(pick[rows]):
+                leg2 = seconds[j]
+                label[rows & (pick == j)] = f"{trains[k]}+{leg2.train_number}"
+                u2 = draws_for(leg2)[2]
+                if u2 not in usages:
+                    usages.append(u2)
+        taken = np.where(censored, "none", label)
         if any(u_.fallback_level is FallbackLevel.NO_DATA for u_ in usages):
             flags.add("l4_pool")
         if any(u_.intermediate_alight for u_ in usages):
             flags.add("intermediate_alight")
 
     arrival = np.where(censored, deadline + settings.late_cap_min * 60, arrival)
-    late_min = np.maximum(0.0, arrival - deadline) / 60
+    late_min = np.minimum(np.maximum(0.0, arrival - deadline) / 60, settings.late_cap_min)
     late = late_min > 0
     time_cost = settings.vot_usd_per_h * (deadline - config.ON_TIME_GRACE_S - leave) / 3600
     exp_late = float(np.mean(settings.vot_usd_per_h * late_min / 60 + settings.hard_penalty_usd * late))
@@ -263,10 +277,15 @@ def _rail_draws(rail, inputs: ScoringInputs, settings: Settings, n: int):
     """(board, alight, PoolUsage) for one rail leg; draws keyed by (seed, train number).
 
     The pool period comes from the run's terminal arrival; a leg alighting at its
-    terminal has that time. A leg ending mid-trip uses its own arrival instead and
-    is flagged intermediate_alight (pool still anchored on its alight stop).
+    terminal has that time. A leg ending mid-trip (to_stop != the trip's terminal)
+    uses its own arrival instead and is flagged intermediate_alight (pool still
+    anchored on its alight stop). Legs built without a terminal fall back to
+    "alights at NY / HB on a toward-NY trip".
     """
-    intermediate = not (rail.toward_ny and rail.to_stop in config.TOWARD_NY_TERMINALS)
+    if rail.terminal is not None:
+        intermediate = rail.to_stop != rail.terminal
+    else:
+        intermediate = not (rail.toward_ny and rail.to_stop in config.TOWARD_NY_TERMINALS)
     draws, usage = sample(inputs.pools, rail.from_stop, rail.to_stop, rail.gtfs_line,
                           rail.toward_ny, period_of(rail.sched_arr), n,
                           _train_rng(settings.seed, rail.train_number))

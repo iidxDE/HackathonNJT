@@ -17,9 +17,9 @@ TUE = date(2026, 10, 13)
 DEADLINE_S = 9 * 3600
 
 
-def pools() -> pd.DataFrame:
+def pools(extra: list[dict] | None = None) -> pd.DataFrame:
     """Weekday AM-peak runs: NEC SE→NY (alight +60..+360 s) and M&E CM→HB (+60..+300 s)."""
-    rows = []
+    rows = list(extra or [])
     for i in range(6):
         term = pd.Timestamp("2026-10-09 08:30", tz="America/New_York").tz_convert("UTC")
         for code, d in (("SE", 30 * i), ("NY", 60 + 60 * i)):
@@ -137,19 +137,23 @@ def test_ranking_rules(inputs):
     assert {scored["SE → NY"].rank, scored["CM → HB + PATH"].rank} == {1, 2}
 
 
-def _rail(frm, to, dep_s, arr_s, train):
+def _rail(frm, to, dep_s, arr_s, train, route="10", terminal="NY"):
     from src.contracts import Leg, LegMode
     return Leg(LegMode.RAIL, frm, to, to_utc(TUE, dep_s), to_utc(TUE, arr_s), train_number=train,
-               gtfs_line="10", direction=0, toward_ny=True)
+               gtfs_line=route, direction=0, toward_ny=True, terminal=terminal)
 
 
-def rail_rail_candidate():
-    """NP → SE (mid-trip alight) on 901, then SE → NY on 902 (08:11) or 903 (08:25)."""
+H8 = 8 * 3600
+T902_ARR, T903_ARR = H8 + 29 * 60, H8 + 43 * 60
+
+
+def rail_rail_candidate(route1: str = "10"):
+    """NP → SE on 901 (mid-trip: its terminal is NY), then SE → NY on the planned 902
+    (dep 08:16, arr 08:29) or the next second-leg train 903 (dep 08:30, arr 08:43)."""
     from src.contracts import Candidate, Leg, LegMode
-    h8 = 8 * 3600
-    r1 = _rail("NP", "SE", h8, h8 + 600, "901")
-    a = _rail("SE", "NY", h8 + 660, h8 + 1380, "902")
-    b = _rail("SE", "NY", h8 + 1500, h8 + 2220, "903")
+    r1 = _rail("NP", "SE", H8, H8 + 600, "901", route=route1)
+    a = _rail("SE", "NY", H8 + 960, T902_ARR, "902")
+    b = _rail("SE", "NY", H8 + 1800, T903_ARR, "903")
     leave = to_utc(TUE, 7 * 3600)
     drive = Leg(LegMode.DRIVE, "ORIGIN", "LOT:SE", leave, to_utc(TUE, 7 * 3600 + 1800))
     walk = Leg(LegMode.WALK, "LOT:SE", "NP", to_utc(TUE, 7 * 3600 + 1800), r1.sched_dep)
@@ -157,18 +161,52 @@ def rail_rail_candidate():
                      catch_next=((r1, a), (r1, b)), leave_home=leave, label="NP → SE → NY")
 
 
-def test_rail_to_rail_nested_catch_next(inputs):
+def test_rail_to_rail_planned_second_leg(inputs):
+    """No delays: SE 08:10 + 5 min same-stop minimum = 08:15 ≤ 902 at 08:16 → 902 every draw."""
+    s = Settings(deadline_s=DEADLINE_S, n=500, delay_scale=0.0)
+    out = score_all([rail_rail_candidate()], inputs, s)[0]
+    assert out.train_taken_share == {"901+902": 1.0}
+    assert pd.Timestamp(out.arrival_p50) == pd.Timestamp(to_utc(TUE, T902_ARR))
+    assert {u.train_number for u in out.pools} == {"901", "902"}
+    assert "intermediate_alight" in out.flags  # 901 alights at SE, its terminal is NY
+    assert [u.intermediate_alight for u in out.pools if u.train_number == "902"] == [False]
+
+
+def test_rail_to_rail_late_first_leg_takes_next_second_leg():
+    """Leg 1 pool runs 10 min late at SE: ready = 08:10 + 600 + 300 = 08:25, later than
+    902 even with its boarding delay (≤ 08:18:30) → the rider takes 903 on every draw."""
+    term = pd.Timestamp("2026-10-09 08:30", tz="America/New_York").tz_convert("UTC")
+    late = [{"service_date": date(2026, 10, 9), "train_number": f"32{i}", "trip_id": f"j{i}",
+             "route_id": "11", "toward_ny": True, "terminal_arr_utc": term, "stop_code": code,
+             "delay_s": d, "delay_vs_gtfs_s": d}
+            for i in range(6) for code, d in (("NP", 0), ("SE", 600))]
+    inp = ScoringInputs(pools(late), drive_cache(), path_schedule(), TUE)
+    out = score_all([rail_rail_candidate(route1="11")], inp, Settings(deadline_s=DEADLINE_S, n=500))[0]
+    assert out.train_taken_share == {"901+903": 1.0}
+    # 903 arrival + its NY alight delay (+60..+360 s in the NEC pool).
+    p50 = pd.Timestamp(out.arrival_p50)
+    assert pd.Timestamp(to_utc(TUE, T903_ARR + 60)) <= p50 <= pd.Timestamp(to_utc(TUE, T903_ARR + 360))
+    assert {u.train_number for u in out.pools} == {"901", "903"}  # PoolUsage of the train taken
+    assert out.censored_share == 0.0
+
+
+def test_rail_to_rail_transfer_minimum_matters(inputs):
+    """Same draws, no same-stop minimum: 902 is catchable more often → earlier median."""
     s = Settings(deadline_s=DEADLINE_S, n=500)
     c = rail_rail_candidate()
-    # Same-stop minimum 5 min: SE arrival 08:10 + 0..150 s + 300 s misses 902 (08:11 + ≤ 150 s) → 903.
-    strict = score_all([c], inputs, s)[0]
-    assert pd.Timestamp(strict.arrival_p50) >= pd.Timestamp(to_utc(TUE, 8 * 3600 + 2220))
-    assert "intermediate_alight" in strict.flags
-    assert {u.train_number for u in strict.pools} >= {"901"}
-    assert any(u.intermediate_alight for u in strict.pools if u.train_number == "901")
-    # No transfer minimum: 902 is often catchable → earlier median arrival.
+    strict = score_all([c], replace(inputs, same_stop_transfer_s=900), s)[0]
     loose = score_all([c], replace(inputs, same_stop_transfer_s=0), s)[0]
-    assert pd.Timestamp(loose.arrival_p50) < pd.Timestamp(to_utc(TUE, 8 * 3600 + 2220))
+    assert strict.train_taken_share == {"901+903": 1.0}
+    assert loose.train_taken_share.get("901+902", 0) > 0.5
+    assert pd.Timestamp(loose.arrival_p50) < pd.Timestamp(strict.arrival_p50)
+
+
+def test_late_minutes_capped_on_every_draw(inputs):
+    """A train arriving after deadline + cap scores exactly the cap, like a censored draw."""
+    s = Settings(deadline_s=H8, n=200, delay_scale=0.0, late_cap_min=10)  # deadline 08:00
+    out = score_all([rail_rail_candidate()], inputs, s)[0]  # arrives 08:29 (29 min late)
+    assert out.expected_late_min == pytest.approx(10.0)
+    assert out.p_on_time == 0.0
 
 
 def test_can_board_rule():

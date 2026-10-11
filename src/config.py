@@ -176,8 +176,9 @@ ROUTER_MAX_ROUNDS = 3  # K: rides searched
 ROUTER_MAX_RIDES_OUT = 2  # journeys with more rides are logged, not passed on
 ROUTER_WINDOW_BEFORE_S = 150 * 60  # departures from deadline − this ...
 # ... to deadline + ROUTER_DEPART_AFTER_S, arrivals ≤ deadline + ROUTER_ARRIVE_AFTER_S.
-# Catch-next needs trains after the deadline; a train arriving later than the
-# scorer's late cap is worth no more than the censored value, so both = LATE_CAP_MIN.
+# Catch-next needs trains after the deadline. The scorer caps lateness at
+# LATE_CAP_MIN on every draw, so a train arriving after deadline + cap cannot
+# change any cost: both bounds = LATE_CAP_MIN.
 ROUTER_ARRIVE_AFTER_S = LATE_CAP_MIN * 60
 ROUTER_DEPART_AFTER_S = LATE_CAP_MIN * 60
 ROUTER_MODE_BY_FEED: dict[str, str] = {"NJT": "rail", "PATH": "path"}
@@ -195,6 +196,10 @@ DEFAULT_OPTION_SOURCE = "router"  # 2.4 gate: GO (eval/router_validation.md)
 def network_npz(service_date: date) -> Path:
     return ARTIFACTS_DIR / NETWORK_NPZ_TEMPLATE.format(ymd=service_date.strftime("%Y%m%d"))
 
+
+# Same-stop minimum transfer (rail → rail at one station, PATH → PATH): router and
+# scorer. transfers.csv "*,*" must equal it (asserted by the network build).
+SAME_STOP_TRANSFER_S = 5 * 60
 
 # --- Safety-net candidates (1.3; estimates, flagged in the UI) ---------------
 SAFETY_MARGIN_S = 5 * 60  # slack between parking and the station buffer

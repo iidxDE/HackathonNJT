@@ -66,9 +66,13 @@ ALERTS_CACHE_JSON = ARTIFACTS_DIR / "alerts_cache.json"
 # error). Live calls only with ALERTS_LIVE = True (or --live) and the key in env / .env.
 ALERTS_LIVE = False
 GEMINI_API_KEY_ENV = "GEMINI_AI_KEY"
-GEMINI_MODEL_ID = "gemini-2.5-flash"
+# Pinned request id (part of the cache key); the API serves it as modelVersion gemini-3.6-flash
+# (kept in each cache row's raw_response). 2.5-flash closed to new users; free tier = 20 req / day.
+GEMINI_MODEL_ID = "gemini-3.5-flash"
 GEMINI_API_URL = "https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
 GEMINI_TIMEOUT_S = 60
+GEMINI_MIN_INTERVAL_S = 13.0  # free tier: 5 requests / min per model
+GEMINI_MAX_RETRIES = 5  # on HTTP 429 / 503, waiting the delay the API asks for
 ALERT_PROMPT_VERSION = "v1"  # bump on any prompt or schema change (part of the cache key)
 GEMINI_CACHE_JSONL = REPO_ROOT / "data" / "alerts" / "gemini_cache.jsonl"  # tracked
 ALERT_LABEL_CHECK_MD = REPO_ROOT / "eval" / "alert_label_check.md"

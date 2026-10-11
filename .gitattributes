@@ -1,0 +1,2 @@
+# Hand-labeled CSV: CRLF records and an embedded CRLF in msg_text must round-trip byte-identical
+data/reference/alert_samples.csv -text

@@ -31,7 +31,9 @@ GTFS_PATH_DIR = GTFS_DIR / "PATH GTFS"
 
 FARES_CSV = REFERENCE_DIR / "njt_fares.csv"
 PATH_FARES_CSV = REFERENCE_DIR / "path_fares.csv"
-ALERT_SAMPLES_CSV = REFERENCE_DIR / "alert_samples.csv"  # hand-labeled; never regenerate over labels
+# Hand-labeled; never regenerate over labels. Tracked in git, so it lives in the repo,
+# not under CROSSING_DATA_DIR (worktrees read their own checkout).
+ALERT_SAMPLES_CSV = REPO_ROOT / "data" / "reference" / "alert_samples.csv"
 PARKING_CSV = REFERENCE_DIR / "parking.csv"
 DRIVING_COSTS_CSV = REFERENCE_DIR / "driving_costs.csv"
 TOLLS_MANUAL_CSV = REFERENCE_DIR / "tolls_manual.csv"

@@ -16,8 +16,9 @@
 # Data (large files — do not commit)
 data/raw/
 data/artifacts
-data/reference
-data/reference/gtfs
+data/reference/*
+# Hand-labeled answer key: tracked (labels are work, not a regenerable artifact)
+!data/reference/alert_samples.csv
 data/processed/
 data/cache/
 *.pbf

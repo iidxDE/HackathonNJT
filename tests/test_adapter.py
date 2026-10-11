@@ -138,7 +138,7 @@ def test_router_candidates_score_like_safety_net():
 def test_router_options_cached(tmp_path):
     net = Network.__new__(Network)  # bare object: only the cache is exercised
     res = RouterResult({"k": []}, {}, AdapterReport())
-    net.__dict__["_router_options"] = {(date(2026, 10, 13), 1, ("X",), ()): res}
+    net.__dict__["_router_options"] = {(date(2026, 10, 13), 1, ("X",), (), None): res}
     assert router_options(net, date(2026, 10, 13), 1, ("X",), exclusions={}) == {"k": []}
     # the exclusion set is part of the key: the default (penn_nrt) run is not this entry
-    assert (date(2026, 10, 13), 1, ("X",), ()) in net.__dict__["_router_options"]
+    assert (date(2026, 10, 13), 1, ("X",), (), None) in net.__dict__["_router_options"]

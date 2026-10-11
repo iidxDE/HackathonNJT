@@ -160,7 +160,7 @@ def route_all(network: Network, service_date: date = config.DEMO_SERVICE_DATE,
               deadline_s: int = config.DEMO_DEADLINE_S,
               stations: tuple[str, ...] = config.ROUTER_ACCESS_STATIONS,
               exclusions: Mapping[str, Exclusion] | None = None,
-              fresh: bool = False) -> RouterResult:
+              fresh: bool = False, base: Exclusion | None = None) -> RouterResult:
     """Plain + exclusion runs per station, unioned by signature (see module doc).
 
     Every hard-coded label is present (empty list when the router finds no such
@@ -168,11 +168,13 @@ def route_all(network: Network, service_date: date = config.DEMO_SERVICE_DATE,
     its infeasible rows. Options within a key are sorted by departure. Cached on
     the network per (service_date, deadline_s, stations, exclusions); fresh=True
     recomputes (fresh timings for reports). exclusions None = config.ROUTER_EXCLUSIONS,
-    {} = plain runs only (router-v1).
+    {} = plain runs only (router-v1). base (e.g. an alert's bans) is composed into every run:
+    the plain run uses base, each named run base ∪ that exclusion. None / empty = no base.
     """
     exclusions = config.ROUTER_EXCLUSIONS if exclusions is None else exclusions
     cache = network.__dict__.setdefault("_router_options", {})
-    key = (service_date, deadline_s, stations, _exclusions_key(exclusions))
+    base = base or None  # an empty Exclusion is no base (same cache entry, same runs)
+    key = (service_date, deadline_s, stations, _exclusions_key(exclusions), base)
     if not fresh and key in cache:
         return cache[key]
     rep = AdapterReport()
@@ -194,7 +196,8 @@ def route_all(network: Network, service_date: date = config.DEMO_SERVICE_DATE,
 
     for s in stations:
         stats = ProfileStats()
-        js = route_profile(network, config.ROUTER_NJT_PREFIX + s, service_date, deadline_s, stats=stats)
+        js = route_profile(network, config.ROUTER_NJT_PREFIX + s, service_date, deadline_s,
+                           exclusion=base, stats=stats)
         rep.profile[s] = stats
         if stats.dropped_rides:
             rep.dropped[f"more than {config.ROUTER_MAX_RIDES_OUT} rides"] += stats.dropped_rides
@@ -214,7 +217,7 @@ def route_all(network: Network, service_date: date = config.DEMO_SERVICE_DATE,
         for name, ex in exclusions.items():
             stats = ProfileStats()
             js = route_profile(network, config.ROUTER_NJT_PREFIX + s, service_date, deadline_s,
-                               exclusion=ex, stats=stats)
+                               exclusion=ex.union(base), stats=stats)
             rep.exclusion_profile[(s, name)] = stats
             if stats.dropped_rides:
                 rep.unscored_alternatives.append({
@@ -271,12 +274,13 @@ def router_options(network: Network, service_date: date = config.DEMO_SERVICE_DA
                    deadline_s: int = config.DEMO_DEADLINE_S,
                    stations: tuple[str, ...] = config.ROUTER_ACCESS_STATIONS,
                    report: AdapterReport | None = None,
-                   exclusions: Mapping[str, Exclusion] | None = None) -> dict[str, list[Option]]:
+                   exclusions: Mapping[str, Exclusion] | None = None,
+                   base: Exclusion | None = None) -> dict[str, list[Option]]:
     """Router Options per signature label (same type as station_options); see route_all.
 
     A passed report is filled from a fresh run.
     """
-    res = route_all(network, service_date, deadline_s, stations, exclusions, fresh=report is not None)
+    res = route_all(network, service_date, deadline_s, stations, exclusions, fresh=report is not None, base=base)
     if report is not None:
         report.__dict__.update(res.report.__dict__)
     return res.options

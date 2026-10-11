@@ -74,3 +74,33 @@ def test_router_cache_key_includes_exclusions(net):
     b = route_all(net, D, DL, exclusions={})
     assert a is route_all(net, D, DL) and b is route_all(net, D, DL, exclusions={})
     assert SE_ALT in a.options and SE_ALT not in b.options
+
+
+@needs_net
+def test_base_none_identical_to_3cae762(net):
+    """route_all(base=None) and base=Exclusion() reproduce the 3.1 output exactly."""
+    from src.routing.exclusion import Exclusion
+    from src.routing.snapshot import OPTIONS_REF, options_snapshot
+    ref = OPTIONS_REF.read_text(encoding="utf-8").splitlines()
+    assert options_snapshot(net) == ref
+    assert options_snapshot(net, base=Exclusion()) == ref
+
+
+@needs_net
+def test_base_is_composed_into_every_run(net):
+    """A base ban (here: train 1612's trip) disappears from the plain run and from every exclusion run."""
+    from src.routing.exclusion import Exclusion
+    plain = route_all(net, D, DL)
+    g = next(i for i, (t, lab) in enumerate(zip(net.trip_ids, net.trip_labels)) if str(lab) == "1612")
+    based = route_all(net, D, DL, base=Exclusion(banned_trips={g}))
+    assert based is not plain and based is route_all(net, D, DL, base=Exclusion(banned_trips={g}))
+
+    def trains(res):
+        return {leg.train_number for opts in res.options.values() for o in opts for leg in o if leg.train_number}
+    assert "1612" in trains(plain) and "1612" not in trains(based)
+    assert SE_ALT in based.options and based.label_flags.get(SE_ALT) == frozenset({ALT_FLAG})
+    # NY banned in the base: no option of any run may board or alight at NY
+    ny = route_all(net, D, DL, base=config.AVOID_PENN_NRT)
+    for _, label, opt in [(None, k, o) for k, os in ny.options.items() for o in os]:
+        assert all(leg.from_stop != "NY" and leg.to_stop != "NY"
+                   for leg in opt if leg.mode in (LegMode.RAIL, LegMode.PATH)), label

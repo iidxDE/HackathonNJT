@@ -35,6 +35,14 @@ class Exclusion:
         object.__setattr__(self, "banned_footpaths",
                            frozenset((str(a), str(b)) for a, b in self.banned_footpaths))
 
+    def union(self, other: "Exclusion | None") -> "Exclusion":
+        """Everything either exclusion bans."""
+        if other is None:
+            return self
+        return Exclusion(self.no_board | other.no_board, self.no_alight | other.no_alight,
+                         self.banned_trips | other.banned_trips, self.banned_routes | other.banned_routes,
+                         self.banned_footpaths | other.banned_footpaths)
+
     def __bool__(self) -> bool:
         return bool(self.no_board or self.no_alight or self.banned_trips or self.banned_routes
                     or self.banned_footpaths)

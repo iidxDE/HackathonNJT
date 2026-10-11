@@ -274,3 +274,13 @@ def test_exclusion_unknown_ids_ignored(toy_net, caplog):
     js = _toy(toy_net, "X:A", exclusion=Exclusion(no_board={"X:NOPE"}, banned_routes={"X:R99"}))
     assert _trains(js) == {("11", "22"), ("41",)}
     assert "not in the network" in caplog.text
+
+
+def test_exclusion_union():
+    from src.routing.exclusion import Exclusion
+    a = Exclusion(no_board={"X:A"}, banned_trips={1})
+    b = Exclusion(no_alight={"X:B"}, banned_trips={2}, banned_routes={"X:R1"}, banned_footpaths={("X:C", "D")})
+    u = a.union(b)
+    assert u == b.union(a) and a.union(None) is a and a.union(Exclusion()) == a
+    assert (u.no_board, u.no_alight, u.banned_trips, u.banned_routes, u.banned_footpaths) == (
+        {"X:A"}, {"X:B"}, {1, 2}, {"X:R1"}, {("X:C", "D")})

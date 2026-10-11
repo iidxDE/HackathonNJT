@@ -119,7 +119,7 @@ def test_demo_network_build():
     assert any(lab.startswith("BLU@") for lab in labels)
     assert "All build asserts passed" in md
     t = load_transfers(config.TRANSFERS_CSV)
-    assert t.same_stop_s == config.TRANSFER_MIN_S["hoboken_njt_to_path"]
+    assert t.same_stop_s == config.SAME_STOP_TRANSFER_S
 
 
 def test_unwrap_midnight():

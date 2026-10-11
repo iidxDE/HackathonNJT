@@ -110,7 +110,7 @@ def main() -> None:
                    & (sw["safety net top (sched)"] == sw["router top (sched)"])).map({True: "yes", False: "**no**"})
     unexplained = int((missing["reason"] == "**unexplained**").sum()) if len(missing) else 0
     new_keys = summary[summary["status"] == "new key"]["key"].tolist()
-    go = unexplained == 0 and bool((sw["agree"] == "yes").all())
+    go = unexplained == 0 and bool((sw["agree"] == "yes").all()) and same_scores
     prof = pd.DataFrame([{"station": s, "iterations": p.iterations, "patterns scanned": p.patterns_scanned,
                           "labels touched": p.labels_touched, "journeys": p.emitted - p.dropped_rides,
                           "dropped (> 2 rides)": p.dropped_rides, "runtime s": f"{p.runtime_s:.3f}"}
@@ -164,8 +164,9 @@ def main() -> None:
         "",
         "Catch-next lists can be shorter from the router: trains arriving after the window "
         f"(deadline + {config.ROUTER_ARRIVE_AFTER_S // 60} min, = the scorer's late cap) and profile-dominated "
-        "trains are not returned. A draw that misses every listed train is censored at the late cap, which is "
-        "the most such a later train could have scored.",
+        "trains are not returned. The scorer caps lateness at the late cap on every draw, so a train arriving "
+        "after deadline + cap cannot change any cost; a draw that misses every listed train is censored at the "
+        "cap, the same value such a train would have scored.",
         "",
     ]
     REPORT_MD.write_text("\n".join(lines), encoding="utf-8")

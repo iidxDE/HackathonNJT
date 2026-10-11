@@ -64,7 +64,7 @@ def path_schedule(path: GtfsFeed, service_date) -> np.ndarray:
 def load_demo_data(service_date=config.DEMO_SERVICE_DATE) -> DemoData:
     njt, path = load_feed(config.GTFS_NJT_RAIL_DIR), load_feed(config.GTFS_PATH_DIR)
     same_stop = (load_transfers(config.TRANSFERS_CSV).same_stop_s if config.TRANSFERS_CSV.exists()
-                 else config.TRANSFER_MIN_S["hoboken_njt_to_path"])
+                 else config.SAME_STOP_TRANSFER_S)
     inputs = ScoringInputs(index_pools(load_pools()), index_drive_cache(load_drive_cache()),
                            path_schedule(path, service_date), service_date, same_stop)
     npz = config.network_npz(service_date)
@@ -97,7 +97,8 @@ def build_stamp() -> str:
 
     try:
         head = git("rev-parse", "--short", "HEAD")
-        dirty = git("status", "--porcelain", "--untracked-files=no")
+        # Generated reports under eval/ do not count: regenerating one must not mark the next dirty.
+        dirty = git("status", "--porcelain", "--untracked-files=no", "--", ".", ":(exclude)eval")
         return (head or "unknown") + ("-dirty" if dirty else "")
     except Exception:  # noqa: BLE001 — a stamp must never break the app
         return "unknown"

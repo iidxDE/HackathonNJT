@@ -91,3 +91,13 @@ def test_evaluate_rows_lists_every_disagreement():
     text = "\n".join(md)
     assert "No labeled positives" in text  # penn: no Y label among the rows
     assert "Accuracy 100% (n = 3)" in text  # kind
+
+
+def test_cause_alternatives_count_as_correct():
+    rows = [_row("A1", lbl_cause="operations;infrastructure"), _row("A2", lbl_cause="equipment;operations")]
+    good = ev.message_prediction(ax.parse_alerts({"alerts": [A]}))
+    infra = ev.Prediction("delay", "infrastructure", good.lines, good.trains, 15, None, None, False)
+    congestion = ev.Prediction("delay", "congestion", good.lines, good.trains, 15, None, None, False)
+    md, dis = ev.evaluate_rows(rows, {"A1": infra, "A2": congestion})
+    assert [(d["alert_id"], d["field"], d["label"]) for d in dis] == [("A2", "cause", "equipment;operations")]
+    assert "Accuracy 50% (n = 2). Labels with alternatives" in chr(10).join(md)

@@ -92,7 +92,9 @@ def _opt(v: str) -> str | None:
 
 
 def label_of(r: dict[str, str]) -> dict:
-    return {"kind": _opt(r["lbl_kind"]), "cause": _opt(r["lbl_cause"]),
+    return {"kind": _opt(r["lbl_kind"]),
+            # lbl_cause may list acceptable alternatives, ";"-separated (e.g. "operations;infrastructure")
+            "cause": tuple(x for x in r["lbl_cause"].split(";") if x.strip()) or None,
             "lines": frozenset(x for x in r["lbl_lines"].split(";") if x),
             "trains": frozenset(x for x in r["lbl_trains"].split(";") if x),
             "delay_min": int(r["lbl_delay_min"]) if r["lbl_delay_min"].strip() else None,
@@ -115,13 +117,20 @@ def evaluate_rows(rows: list[dict[str, str]], preds: dict[str, Prediction]) -> t
     def pct(x):
         return "—" if x is None else f"{x:.0%}"
 
+    for i in ids:  # cause alternatives: credit the one predicted, else score against the first
+        alts, pred = L[i]["cause"], preds[i].cause
+        L[i]["cause_alts"] = alts
+        L[i]["cause"] = None if alts is None else (pred if pred in alts else alts[0])
     for fld in ("kind", "cause"):
         pairs = [(L[i][fld], getattr(preds[i], fld)) for i in ids if fld != "kind" or L[i]["kind"]]
-        out += [f"### {fld}", "", f"Accuracy {pct(accuracy(pairs))} (n = {len(pairs)}).", "",
+        extra = (" Labels with alternatives count as correct when any alternative is predicted."
+                 if fld == "cause" and any(len(L[i]["cause_alts"] or ()) > 1 for i in ids) else "")
+        out += [f"### {fld}", "", f"Accuracy {pct(accuracy(pairs))} (n = {len(pairs)}).{extra}", "",
                 _md(confusion(pairs)) if pairs else "No rows.", ""]
         for i in ids:
             if (fld != "kind" or L[i]["kind"]) and L[i][fld] != getattr(preds[i], fld):
-                note(i, fld, L[i][fld], getattr(preds[i], fld))
+                lab = ";".join(L[i]["cause_alts"]) if fld == "cause" and L[i]["cause_alts"] else L[i][fld]
+                note(i, fld, lab, getattr(preds[i], fld))
     for fld in ("lines", "trains"):
         pairs = [(L[i][fld], getattr(preds[i], fld)) for i in ids]
         s = set_scores(pairs)

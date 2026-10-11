@@ -29,8 +29,8 @@ def test_migration_keeps_every_value_and_column_order():
     for o, n in zip(old, new):
         assert n["msg_text"].encode("utf-8") == o["msg_text"].encode("utf-8")  # A017's CRLF included
         assert n["lbl_affects_penn_legacy"] == o["lbl_affects_penn"]
-        for c in old_cols:
-            if c not in ("lbl_lines", "lbl_trains", "lbl_affects_penn"):
+        for c in old_cols:  # lbl_* may change by human review after the migration
+            if not c.startswith("lbl_"):
                 assert n[c] == o[c], (n["alert_id"], c)
         assert n["lbl_reviewed"] in ("N", "Y")
         names = [x for x in n["lbl_lines"].split(";") if x]

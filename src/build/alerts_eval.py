@@ -112,7 +112,8 @@ def evaluate_rows(rows: list[dict[str, str]], preds: dict[str, Prediction]) -> t
     dis: list[dict] = []
 
     def note(i, fld, lab, pred):
-        dis.append({"alert_id": i, "field": fld, "label": lab, "predicted": pred, "msg_text": msg[i]})
+        dis.append({"alert_id": i, "field": fld, "label": NONE if lab is None else lab,
+                    "predicted": NONE if pred is None else pred, "msg_text": msg[i]})
 
     def pct(x):
         return "—" if x is None else f"{x:.0%}"

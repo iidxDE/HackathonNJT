@@ -197,6 +197,9 @@ def main(argv: list[str] | None = None) -> None:
     reviewed = [r for r in rows if r["lbl_reviewed"].strip() == "Y"]
     demo = [r for r in rows if r.get("on_demo_date") == "Y"]
     cache = load_cache()
+    # Scored = reviewed rows cached under every compared prompt (same rows before / after).
+    scored = [r for r in reviewed if all(cache_key(r["msg_text"], v) in cache for v in versions)]
+    pending = [r["alert_id"] for r in reviewed if r not in scored]
     lines = [
         "# Alert extraction: Gemini vs the answer key",
         "",
@@ -204,10 +207,14 @@ def main(argv: list[str] | None = None) -> None:
         f"`{config.GEMINI_MODEL_ID}`, structured output (JSON schema), temperature 0, replayed from "
         f"`data/alerts/gemini_cache.jsonl` (no live calls).",
         "",
-        f"**n = {len(reviewed)} reviewed messages** (lbl_reviewed = Y) of {len(rows)} in "
-        "`data/reference/alert_samples.csv`. Unreviewed rows are never scored.",
+        f"**n = {len(scored)} scored messages**: {len(reviewed)} reviewed (lbl_reviewed = Y) of {len(rows)} in "
+        "`data/reference/alert_samples.csv`"
+        + (f", minus {len(pending)} reviewed but not yet extracted ({', '.join(pending)}; "
+           "run `python -m src.build.alerts_extract --live`)" if pending else "")
+        + ". Unreviewed rows are never scored.",
         "",
     ]
+    reviewed = scored
     cov = []
     for v in versions:
         have = lambda rs: sum(cache_key(r["msg_text"], v) in cache for r in rs)  # noqa: E731
@@ -216,8 +223,8 @@ def main(argv: list[str] | None = None) -> None:
                     "demo-date messages": f"{have(demo)} / {len(demo)}"})
     lines += ["## Cache coverage", "", _md(pd.DataFrame(cov)), ""]
     if not reviewed:
-        lines += ["## Metrics", "", "**Not computed: no row has lbl_reviewed = Y yet.** Review the proposed labels "
-                  "in `alert_samples.csv` (A000–A019 prefilled, A020–A033 empty), set lbl_reviewed = Y, and rerun. "
+        lines += ["## Metrics", "", "**Not computed: no reviewed row is extracted yet.** Review the proposed labels "
+                  "in `alert_samples.csv`, set lbl_reviewed = Y, extract, and rerun. "
                   "No accuracy is claimed until then.", ""]
     for v in versions:
         if not reviewed:
@@ -228,7 +235,7 @@ def main(argv: list[str] | None = None) -> None:
     if len(versions) > 1:
         lines += [f"Prompt history: {' → '.join(versions)} (tuned at most once; both blocks above).", ""]
     config.ALERT_EXTRACTION_MD.write_text("\n".join(lines), encoding="utf-8")
-    print(f"wrote {config.ALERT_EXTRACTION_MD} (n = {len(reviewed)})")
+    print(f"wrote {config.ALERT_EXTRACTION_MD} (n = {len(reviewed)} scored, pending: {pending or 'none'})")
 
 
 if __name__ == "__main__":
